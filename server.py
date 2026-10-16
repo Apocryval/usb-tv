@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Local UI/API and seekable USB media server. No runtime dependencies."""
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+import argparse
+import json
+import mimetypes
+import re
+import sys
+import threading
+import uuid
+import webbrowser
+import zipfile
+from catalogue import Catalogue
+from media import analyse_breaks
+from distribution import ASSETS
+from updater import install_update
+import broadcasts
+from session import LibrarySession
+
+APP_ROOT = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    executable = Path(sys.executable).resolve()
+    APP_ROOT = executable.parent.parent.parent if executable.parent.parent.name == "Apps" else executable.parent
+WEB_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT))
+LIBRARY = None
+SESSION = None
+SCANS = None
+
+
+class ScanJobs:
+    """One background scanner; durable catalogue checkpoints and progress on USB."""
+    def __init__(self, library):
+        self.library = library
+        self.path = library.root / "scan-job.json"
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.state = {"status":"idle", "completed":0, "total":0, "errors":[], "changed":False}
+        if self.path.exists():
+            try:
+                saved = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(saved, dict):
+                    self.state.update(saved)
+                if self.state["status"] in ("running", "queued"):
+                    self.state["status"] = "interrupted"
+            except (OSError, ValueError):
+                pass
+
+    def status(self):
+        with self.lock:
+            return dict(self.state)
+
+    def persist(self):
+        temporary = self.path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(self.state,ensure_ascii=False),encoding="utf-8")
+        temporary.replace(self.path)
+
+    def start(self):
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return dict(self.state)
+            self.stop_event.clear()
+            self.state = {"id":uuid.uuid4().hex, "status":"running", "stage":"queued", "completed":0,
+                          "total":0, "current":"", "errors":[], "error_count":0, "changed":False}
+            self.persist()
+            self.thread = threading.Thread(target=self.run, name="USB.tv scanner")
+            self.thread.start()
+            return dict(self.state)
+
+    def progress(self, **values):
+        with self.lock:
+            if "errors" in values:
+                values["error_count"] = len(values["errors"])
+                values["errors"] = values["errors"][:50]
+            previous_stage = self.state.get("stage")
+            self.state.update(values)
+            if previous_stage != self.state.get("stage") or "completed" in values and values["completed"] % 25 == 0:
+                self.persist()
+
+    def run(self):
+        before = None
+        try:
+            with self.library.lock:
+                before = self.library.read()
+            after = self.library.scan(progress=self.progress, cancelled=self.stop_event.is_set)
+            with self.lock:
+                self.state.update(status="complete", stage="complete", current="", changed=before != after)
+        except InterruptedError as error:
+            with self.lock:
+                self.state.update(status="interrupted", error=str(error), changed=True)
+        except Exception as error:
+            with self.lock:
+                self.state.update(status="failed", error=str(error), changed=True)
+        finally:
+            with self.lock:
+                self.persist()
+
+    def close(self):
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join()
+
+
+class SessionServer(ThreadingHTTPServer):
+    # Finish pending metadata writes before releasing the library's session lock.
+    daemon_threads = False
+
+    def __init__(self, *args):
+        self.stopping = threading.Event()
+        super().__init__(*args)
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def send_json(self, data, status=200):
+        payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def media_response(self, route, head=False):
+        relative = Path(unquote(route.lstrip("/")))
+        if not relative.parts or relative.parts[0] not in ("Videos", "Adverts"):
+            return self.send_error(404)
+        target = (LIBRARY.root / relative).resolve()
+        if not target.is_relative_to(LIBRARY.root / relative.parts[0]) or not target.is_file():
+            return self.send_error(404)
+        try:
+            with target.open("rb") as media:
+                size = target.stat().st_size
+                start, end, status = 0, size - 1, 200
+                requested = self.headers.get("Range")
+                if requested:
+                    match = re.fullmatch(r"bytes=(\d*)-(\d*)", requested.strip())
+                    if match and any(match.groups()) and size:
+                        first, last = match.groups()
+                        if first:
+                            start = int(first)
+                            end = min(int(last), size - 1) if last else size - 1
+                        else:
+                            start = max(0, size - int(last))
+                        if start > end or start >= size:
+                            match = None
+                        status = 206
+                    else:
+                        match = None
+                    if match is None:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{size}")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                self.send_response(status)
+                self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(max(0, end - start + 1)))
+                if status == 206:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                self.end_headers()
+                if head:
+                    return
+                media.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = media.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except FileNotFoundError:
+            self.send_error(404)
+
+    def do_HEAD(self):
+        route = urlparse(self.path).path
+        if route.startswith(("/Videos/", "/Adverts/")):
+            return self.media_response(route, head=True)
+        if route != "/" and route.lstrip("/") not in ASSETS:
+            return self.send_error(404)
+        return super().do_HEAD()
+
+    def do_GET(self):
+        if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
+            return self.send_error(503, "USB.tv is restarting")
+        route = urlparse(self.path).path
+        try:
+            if route == "/api/catalog":
+                with LIBRARY.lock:
+                    return self.send_json(LIBRARY.read())
+            if route == "/api/broadcasts":
+                with LIBRARY.lock:
+                    return self.send_json(broadcasts.read(LIBRARY.root))
+            if route == "/api/rescan":
+                return self.send_json(LIBRARY.scan())
+            if route == "/api/scan":
+                return self.send_json(SCANS.status())
+            if route.startswith(("/Videos/", "/Adverts/")):
+                return self.media_response(route)
+            if route != "/" and route.lstrip("/") not in ASSETS:
+                return self.send_error(404)
+            return super().do_GET()
+        except (OSError, ValueError) as error:
+            return self.send_json({"error": str(error)}, 500)
+
+    def do_POST(self):
+        route = urlparse(self.path).path
+        if route == "/api/session/stop":
+            if not SESSION or not SESSION.authorized(self.headers.get("X-USBtv-Session")):
+                return self.send_error(403)
+            self.send_json({"stopping":True})
+            if not self.server.stopping.is_set():
+                self.server.stopping.set()
+                print("A new USB.tv session is replacing this one. Closing…", flush=True)
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
+        if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
+            return self.send_error(503, "USB.tv is restarting")
+        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan"):
+            return self.send_error(404)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 8_000_000:
+                return self.send_error(413)
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError("Expected an object")
+            if route == "/api/scan":
+                if data.get("action") == "pause":
+                    SCANS.stop_event.set()
+                    return self.send_json(SCANS.status(), 202)
+                return self.send_json(SCANS.start(), 202)
+            if route == "/api/broadcasts":
+                with LIBRARY.lock:
+                    updated = broadcasts.save(LIBRARY.root, data)
+                    return self.send_json(updated or {"error":"Another window changed the schedule. Refresh before reshuffling."}, 200 if updated else 409)
+            if route == "/api/catalog":
+                return self.send_json(LIBRARY.save_edits(data))
+            with LIBRARY.lock:
+                catalog = LIBRARY.read()
+                item = next((item for item in catalog["videos"] if item["id"] == data.get("id") and not item.get("missing")), None)
+                if not item:
+                    raise ValueError("Unknown video")
+                snapshot = dict(item)
+            points, source = analyse_breaks(LIBRARY.root / snapshot["file"], LIBRARY.root, snapshot["duration"])
+            with LIBRARY.lock:
+                catalog = LIBRARY.read()
+                item = next((item for item in catalog["videos"] if item["id"] == snapshot["id"] and item["fingerprint"] == snapshot["fingerprint"]), None)
+                if not item:
+                    raise ValueError("The file changed during analysis; rescan and try again")
+                item["suggested_break_points"], item["break_suggestion_source"] = points, source
+                LIBRARY.write(catalog)
+            return self.send_json({"points": points, "source": source})
+        except (ValueError, OSError, RuntimeError) as error:
+            return self.send_json({"error": str(error)}, 400)
+
+    def log_message(self, fmt, *args):
+        if len(args) > 1 and str(args[1])[:1] in {"4", "5"}:
+            super().log_message(fmt, *args)
+
+
+def main():
+    global LIBRARY, WEB_ROOT, SESSION, SCANS
+    parser = argparse.ArgumentParser(description="USB.tv local library")
+    parser.add_argument("--library-root", type=Path, default=APP_ROOT)
+    parser.add_argument("--no-browser", action="store_true", help="Start without opening a browser")
+    parser.add_argument("--update-from", type=Path, help="Install a local all-platform update ZIP, then exit")
+    options = parser.parse_args()
+    if options.update_from:
+        try:
+            install_update(options.update_from, options.library_root)
+        except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as error:
+            parser.exit(1, f"Update failed: {error}\nClose USB.tv before updating and check the ZIP and free disk space.\n")
+        return
+    # Shared UI files on the USB can be updated once for every packaged platform.
+    if all((options.library_root / name).is_file() for name in ASSETS):
+        WEB_ROOT = options.library_root.resolve()
+    try:
+        with LibrarySession(options.library_root) as SESSION:
+            LIBRARY = Catalogue(options.library_root)
+            SCANS = ScanJobs(LIBRARY)
+            server = SessionServer(("127.0.0.1", 0), Handler)
+            try:
+                SESSION.publish(server.server_port)
+                SCANS.start()
+                url = f"http://127.0.0.1:{server.server_port}/"
+                print(f"USB.tv is running at {url}\nKeep this window open. Press Ctrl+C to stop.", flush=True)
+                if not options.no_browser:
+                    browser_timer = threading.Timer(0.8, lambda: webbrowser.open(url))
+                    browser_timer.daemon = True
+                    browser_timer.start()
+                server.serve_forever()
+            finally:
+                server.stopping.set()
+                SCANS.close()
+                server.server_close()
+    except KeyboardInterrupt:
+        print("\nUSB.tv stopped.")
+    except (OSError, RuntimeError) as error:
+        parser.exit(1, f"USB.tv could not start: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

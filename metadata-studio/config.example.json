@@ -1,0 +1,12 @@
+{
+  "library_root": "D:/USB.tv",
+  "ollama_url": "http://127.0.0.1:11434",
+  "model": "gemma3:4b",
+  "ffmpeg": "",
+  "ffprobe": "",
+  "whisper_cli": "C:/AI/whisper.cpp/build/bin/Release/whisper-cli.exe",
+  "whisper_model": "C:/AI/whisper.cpp/models/ggml-base.en.bin",
+  "language": "en",
+  "frame_count": 6,
+  "context_length": 8192
+}

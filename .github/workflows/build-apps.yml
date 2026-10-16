@@ -1,0 +1,71 @@
+name: Build USB.tv apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-latest
+          - target: linux-x64
+            runner: ubuntu-22.04
+          - target: darwin-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install build-only packager
+        run: python -m pip install -r requirements-build.txt
+      - name: Build portable app
+        run: python build.py
+      - name: Upload platform build
+        uses: actions/upload-artifact@v4
+        with:
+          name: USBtv-${{ matrix.target }}
+          path: Apps/${{ matrix.target }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle:
+    name: Package all-platform update
+    needs: package
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: USBtv-windows-x64
+          path: Apps/windows-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: USBtv-linux-x64
+          path: Apps/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: USBtv-darwin-arm64
+          path: Apps/darwin-arm64
+      - name: Assemble complete update ZIP
+        run: python package_update.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: USBtv-all-platforms
+          path: dist/USBtv-all-platforms.zip
+          if-no-files-found: error
+          retention-days: 30

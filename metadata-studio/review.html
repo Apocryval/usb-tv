@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>USB.tv Metadata Studio — Review</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101820;color:#edf3f7}body{max-width:1100px;margin:32px auto;padding:0 20px}h1{margin-bottom:8px}p{line-height:1.6;color:#b8cbd7}button,.file{padding:10px 16px;background:#b3e8ce;color:#10231c;border:0;border-radius:6px;font:inherit;cursor:pointer}header{position:sticky;top:0;background:#101820ed;padding:16px 0;z-index:1}nav{display:flex;gap:12px;flex-wrap:wrap}article{border:1px solid #3b515f;border-radius:10px;padding:20px;margin:20px 0;background:#17232c}label{display:block;margin:12px 0;color:#c9dae5}input:not([type=checkbox]),textarea{box-sizing:border-box;width:100%;background:#0d151c;color:#fff;padding:10px;border:1px solid #4f6a7a;border-radius:5px;font:inherit}textarea{resize:vertical}.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}small{overflow-wrap:anywhere;color:#9bb2bf}.approve{font-weight:bold;color:#b3e8ce}.evidence{white-space:pre-wrap;color:#becfd9}#status{color:#b3e8ce}#errors{color:#ffbb9f;white-space:pre-wrap}details{margin-top:16px}a{color:#b3e8ce}@media(max-width:650px){.grid{grid-template-columns:1fr}header{position:static}}
+</style>
+<h1>Metadata Studio</h1><p>Review the evidence, edit the suggestions, then approve individual videos. This page never modifies your library. Sampled frames and speech recognition can miss context or be wrong.</p>
+<header><nav><button id="export">Export approved for USB.tv</button><button id="save">Save review draft</button><label class="file" style="margin:0">Load draft<input id="load" type="file" accept=".json" hidden></label></nav><p id="status" aria-live="polite"></p></header>
+<p>Use “Save review draft” before closing; browser edits are held in this page until downloaded. Load that draft to continue later. In USB.tv, import the approved JSON under Library &amp; Labels → Bulk Review &amp; Suggestions, review it, then save selected rows.</p>
+<div id="errors"></div><main id="rows"></main>
+<script>
+"use strict";
+let report = /*REPORT_DATA*/null;
+const $=id=>document.getElementById(id);
+const fields=[['title','Display title',300],['description','Factual description',1000],['genres','Genres (comma separated)'],['channels','Channels (comma separated)'],['tags','Tags (comma separated)'],['tagline','Retro TV tagline',300],['tagline_goblin','Goblin tagline',300]];
+const lists=new Set(['genres','channels','tags']);
+const list=value=>[...new Set(value.split(',').map(v=>v.trim()).filter(Boolean))];
+function status(){const selected=report.suggestions.filter(r=>r.approved).length;$('status').textContent=`${selected} approved / ${report.suggestions.length} suggestions`;$('export').disabled=!selected;}
+function render(){
+  $('save').disabled=false;
+  $('rows').replaceChildren();
+  $('errors').textContent=(report.errors||[]).map(e=>`#${e.id}: ${e.error}`).join('\n');
+  for(const row of report.suggestions){
+    const article=document.createElement('article');
+    const label=document.createElement('label');label.className='approve';
+    const check=document.createElement('input');check.type='checkbox';check.checked=Boolean(row.approved);check.onchange=()=>{row.approved=check.checked;status();};
+    label.append(check,` Approve #${row.id}`);article.append(label);
+    const file=document.createElement('small');file.textContent=row.file;article.append(file);
+    const grid=document.createElement('div');grid.className='grid';
+    for(const [key,name,limit] of fields){
+      const l=document.createElement('label');l.textContent=name;
+      const input=document.createElement(key==='description'?'textarea':'input');if(limit)input.maxLength=limit;
+      input.value=lists.has(key)?(row[key]||[]).join(', '):(row[key]||'');
+      input.oninput=()=>{row[key]=lists.has(key)?list(input.value):input.value;row.approved=false;check.checked=false;status();};
+      l.append(input);grid.append(l);
+    }
+    article.append(grid);
+    const details=document.createElement('details');details.open=true;
+    const summary=document.createElement('summary');summary.textContent='Evidence and uncertainty';
+    const evidence=document.createElement('p');evidence.className='evidence';evidence.textContent=[row.evidence,...(row.uncertainties||[]).map(v=>'• '+v)].filter(Boolean).join('\n');
+    details.append(summary,evidence);article.append(details);$('rows').append(article);
+  }
+  status();
+}
+function download(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+$('save').onclick=()=>download(report,'usbtv-review-draft.json');
+$('export').onclick=()=>download({version:1,suggestions:report.suggestions.filter(r=>r.approved)},'usbtv-approved-metadata.json');
+$('load').onchange=async event=>{try{const next=JSON.parse(await event.target.files[0].text());if(!Array.isArray(next.suggestions)||!next.suggestions.every(r=>r&&typeof r.id==='string'&&fields.every(([k])=>r[k]===undefined||(lists.has(k)?Array.isArray(r[k])&&r[k].every(v=>typeof v==='string'):typeof r[k]==='string'))))throw Error('Invalid review draft');report=next;render();}catch(error){$('status').textContent=error.message;}event.target.value='';};
+if(report)render();else{$('status').textContent='Open output/review.html after analysis, or load a saved draft.';$('export').disabled=true;$('save').disabled=true;}
+</script></html>

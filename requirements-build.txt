@@ -1,0 +1,2 @@
+# Build-time tool only. Target computers use the packaged app and do not need it.
+pyinstaller>=6.10,<7

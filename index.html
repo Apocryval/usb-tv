@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#11131b">
+  <title>USB.tv — your personal broadcast</title>
+  <link rel="icon" href="favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 64x64">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="effects.css">
+  <link rel="stylesheet" href="themes.css">
+  <link rel="stylesheet" href="library.css">
+  <link rel="stylesheet" href="intro.css">
+</head>
+<body>
+  <section id="startup" class="startup" aria-label="USB.tv startup animation" hidden>
+    <canvas id="startup-noise" aria-hidden="true"></canvas>
+    <div class="startup-logo" aria-hidden="true">
+      <svg class="startup-goblin" viewBox="0 0 160 100" aria-hidden="true"><path d="M47 30 5 9 22 60 47 66M113 30 155 9 138 60 113 66" fill="#537541" stroke="#b5c879" stroke-width="3"/><path d="M40 39Q40 13 80 13T120 39L113 77 80 96 47 77Z" fill="#71954f" stroke="#c8d58a" stroke-width="3"/><path d="m50 41 22 6-7 13-15-5m60-14-22 6 7 13 15-5" fill="#eddd77"/><path d="m55 36 18 7m32-7-18 7M64 76q16 9 32-2" fill="none" stroke="#253e29" stroke-width="5"/><path d="m67 77 5 10 5-8m10-1 5 8 4-11" fill="#f3e4a9"/></svg>
+      <div class="startup-orbit"></div>
+      <div class="startup-wordmark" data-text="USB.tv">USB<span>.tv</span></div>
+      <div class="startup-stripes"></div>
+      <p>YOUR PERSONAL BROADCAST</p>
+      <small>TRANSMITTING FROM SOMEWHERE ELSE</small>
+    </div>
+    <div class="startup-controls"><button id="startup-sound" type="button">♪ STARTING INTRO SOUND…</button><button id="startup-skip" type="button">SKIP INTRO · ESC</button></div>
+  </section>
+  <div class="shell">
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark">U</span><div><div class="brand-name">USB<span>.tv</span></div><div class="brand-tag">YOUR PERSONAL BROADCAST</div></div></div>
+      <div class="air-status"><span class="live-dot"></span><span>ON AIR</span><time id="clock">--:--</time></div>
+    </header>
+
+    <nav class="nav-tabs" aria-label="Main navigation">
+      <button class="tab active" data-page="guide">▦ <span>TV GUIDE</span></button>
+      <button class="tab" data-page="library">▤ <span>LIBRARY & LABELS</span></button>
+      <div class="nav-spacer"></div>
+      <button class="effect-button" id="settings-toggle" aria-label="Open appearance settings" title="Appearance settings">⚙</button>
+      <button class="effect-button" id="crt-toggle" aria-pressed="false" title="Toggle CRT screen effect">▥ <span>CRT</span></button>
+      <button class="effect-button" id="fullscreen-toggle" aria-pressed="false" title="Toggle fullscreen">⛶ <span>FULL SCREEN</span></button>
+      <button class="rescan-button" id="rescan">↻ <span>RESCAN VIDEOS</span></button>
+    </nav>
+
+    <aside id="server-notice" class="server-notice" role="alert" hidden>
+      <strong>Start USB.tv using its launcher</strong>
+      <p>This page was opened directly from index.html. Library changes need USB.tv’s local server. Open <b>start-usbtv.command</b> on Mac, <b>Start USB.tv.bat</b> on Windows, or run <b>sh ./start-usbtv.sh</b> on Linux. Use the browser page it opens and keep the terminal running.</p>
+    </aside>
+    <main>
+      <section class="page active" id="page-guide">
+        <div class="section-heading"><div><p class="eyebrow">NOW BROADCASTING</p><h1>The channel guide</h1><p class="subheading">A shuffled rotation, tuned to your collection.</p></div><div class="guide-heading-tools"><div class="date-chip" id="guide-date"></div><button type="button" id="advanced-toggle" aria-label="Advanced mode" aria-pressed="false" aria-controls="guide-advanced-controls" title="Show advanced controls"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--bg)"/><circle cx="15" cy="17" r="3" fill="var(--bg)"/></svg></button></div></div>
+        <section id="channel-preview" class="channel-preview hidden" aria-label="Selected channel preview">
+          <div class="channel-preview-details"><p class="eyebrow" id="preview-channel"></p><h2 id="preview-title"></h2><p id="preview-description"></p><p id="preview-meta"></p><button type="button" class="primary-button" id="preview-watch">WATCH CHANNEL</button><p class="preview-hint">Hover over or focus a programme for its full title. Click to watch the channel live.</p></div>
+          <div class="channel-preview-monitor"><video id="guide-preview-video" muted playsinline preload="metadata" aria-label="Muted live channel preview" tabindex="-1"></video><span class="preview-badge">LIVE · MUTED</span><div id="preview-message" class="preview-message" hidden></div><button type="button" id="preview-play" class="primary-button" hidden>PLAY PREVIEW</button></div>
+        </section>
+        <div class="guide-controls" id="guide-advanced-controls" data-advanced hidden><label for="guide-span">Guide time span</label><input id="guide-span" type="range" min="30" max="240" step="30" value="120" aria-describedby="guide-span-value"><output id="guide-span-value" for="guide-span">2 hours</output></div>
+        <nav class="guide-browse" aria-label="Browse guide times"><button type="button" id="guide-earlier" aria-label="Guide 30 minutes earlier">‹ EARLIER</button><button type="button" id="guide-now">NOW</button><span id="guide-window-label" aria-live="polite"></span><button type="button" id="guide-later" aria-label="Guide 30 minutes later">LATER ›</button></nav>
+        <aside id="guide-programme-details" aria-label="Programme details"><p class="eyebrow">GUIDE SELECTION</p><p id="guide-programme-title">Hover over or focus a programme to see its full title.</p><p id="guide-programme-meta"></p></aside>
+        <div class="guide-head"><span>CHANNEL</span><span class="time-ruler" id="time-ruler"></span></div>
+        <div id="guide-rows" class="guide-rows" role="group" aria-label="Channel programme guide" aria-describedby="guide-keyboard-help"></div>
+        <p id="guide-keyboard-help" class="guide-keyboard-help">↑ ↓ Channels · ← → Programmes and later times · Enter Watch live · Home Return to now</p>
+        <div class="empty-state hidden" id="guide-empty"><div class="empty-antenna">⌁</div><h2>Nothing on the schedule yet</h2><p>Add videos to the <code>Videos</code> folder, then rescan to build your first channels.</p><button class="primary-button" data-goto="library">OPEN LIBRARY & LABELS</button></div>
+      </section>
+
+      <section class="page" id="page-library">
+        <div class="section-heading"><div><p class="eyebrow">YOUR VIDEO COLLECTION</p><h1>Library & labels</h1><p class="subheading">Titles, genres and channels are saved to this USB drive.</p></div><div class="library-count" id="library-count">0 VIDEOS</div></div>
+        <div class="library-note"><span class="note-icon">i</span><span>Add programmes to <code>Videos/</code> and ads to <code>Adverts/</code>, then rescan. Display titles are separate from filenames.</span></div>
+        <div class="library-toolbar"><label>Show <select id="library-filter"><option value="all">All media</option><option value="review">Needs review</option><option value="unassigned">Unassigned programmes</option><option value="programme">Programmes</option><option value="advert">Adverts</option><option value="missing">Missing files</option></select></label><span id="review-count" aria-live="polite"></span><button class="media-edit" id="bulk-review">BULK REVIEW & SUGGESTIONS</button></div>
+        <div class="library-filters"><label>Search<input id="library-search" type="search" placeholder="Title, filename, folder, tags or ID"></label><label>Channel<select id="library-channel"><option value="">All channels</option></select></label><label>Genre<select id="library-genre"><option value="">All genres</option></select></label><button type="button" class="media-edit" id="read-page-lengths">READ MISSING LENGTHS ON THIS PAGE</button></div>
+        <div id="scan-progress" class="scan-progress" role="status" hidden><progress id="scan-meter" max="1" value="0"></progress><span id="scan-message"></span><button type="button" class="media-edit" id="scan-pause" hidden>PAUSE SCAN</button><details id="scan-errors" hidden><summary>Files needing attention</summary><p id="scan-error-text"></p></details></div>
+        <div class="library-pagination"><button type="button" class="media-edit" id="library-prev">PREVIOUS</button><span id="library-page-info"></span><button type="button" class="media-edit" id="library-next">NEXT</button><label>Per page<select id="library-page-size"><option value="50">50</option><option value="100">100</option></select></label></div>
+        <div class="table-wrap"><table><thead><tr><th>ID / TITLE</th><th>TYPE</th><th>LENGTH</th><th>GENRES</th><th>CHANNELS / REVIEW</th><th>EDIT</th></tr></thead><tbody id="library-body"></tbody></table></div>
+        <section class="channel-manager" aria-labelledby="channels-heading"><h2 id="channels-heading">Channels & advert breaks</h2><p>New assignments wait until a loop boundary at least an hour away. Reshuffle now restarts a channel immediately and includes pending videos. Break length 0 disables ads in the next lineup.</p><form id="add-channel-form"><label>New channel <input id="new-channel" maxlength="100" required placeholder="e.g. Goblin documentaries"></label><button type="submit" class="primary-button">ADD CHANNEL</button></form><div id="channel-settings"></div></section>
+        <div class="empty-state hidden" id="library-empty"><div class="empty-antenna">▤</div><h2>Your library is ready</h2><p>Drop video files into the USB drive's <code>Videos</code> folder, then rescan.</p></div>
+      </section>
+    </main>
+    <footer><span>USB.tv <span class="footer-separator">/</span> LOCAL PLAYBACK</span><span id="save-status">CATALOGUE READY</span></footer>
+  </div>
+
+  <div id="crt-overlay" aria-hidden="true"></div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings-heading"><h2 id="settings-title">Appearance</h2><button id="close-settings" aria-label="Close settings">×</button></div>
+    <fieldset class="theme-options"><legend>Choose your broadcast style</legend>
+      <label class="theme-option"><input type="radio" name="theme" value="satellite"><span><strong>Satellite nostalgia</strong><small>Deep blue, yellow highlights, classic TV guide.</small></span></label>
+      <label class="theme-option"><input type="radio" name="theme" value="teletext"><span><strong>Teletext after dark</strong><small>Black screen, bright text, square edges.</small></span></label>
+      <label class="theme-option"><input type="radio" name="theme" value="goblin"><span><strong>Goblin Cable</strong><small>Mossy greens and a station under the floorboards.</small></span></label>
+    </fieldset>
+    <fieldset class="theme-options"><legend>Fullscreen while watching</legend><label class="theme-option"><input type="radio" name="fullscreen-mode" value="video"><span><strong>Video fills the screen</strong><small>Video with channel tuning and labels. Controls appear when you move the mouse.</small></span></label><label class="theme-option"><input type="radio" name="fullscreen-mode" value="app"><span><strong>Whole app</strong><small>Expand USB.tv with the guide and its windowed video player.</small></span></label></fieldset><p class="settings-note">Theme and fullscreen preference are saved on the USB drive.</p>
+  </dialog>
+  <dialog id="editor-dialog" aria-labelledby="editor-heading"><form id="media-editor"><div class="settings-heading"><h2 id="editor-heading">Edit media</h2><button type="button" id="close-editor" aria-label="Close editor">×</button></div>
+    <div id="editor-file" class="editor-file"></div>
+    <div class="editor-fields"><label>Display title<input id="edit-title" maxlength="300" placeholder="Give this video a display title"></label><label>Type<select id="edit-type"><option value="programme">Programme</option><option value="advert">Advert</option></select></label><label>Tags, comma separated<input id="edit-tags" maxlength="1000"></label><label class="check-label"><input type="checkbox" id="edit-enabled">Enabled for broadcast</label></div>
+    <fieldset><legend>Genres</legend><div id="genre-options" class="choice-list"></div><div class="choice-add"><input id="new-genre" maxlength="100" aria-label="New genre" placeholder="Add a genre"><button type="button" id="add-genre">ADD & SELECT</button></div><p class="settings-note">Genres label your video. Choose its broadcast destinations separately under Allowed channels. Save labels also includes any genre still typed above.</p></fieldset>
+    <fieldset><legend>Allowed channels</legend><div id="channel-options" class="choice-list"></div><p class="settings-note">Programmes need at least one channel. Adverts with no selection can play on every channel.</p></fieldset>
+    <fieldset id="break-editor"><legend>Internal advert break points</legend><p class="settings-note">Use timestamps separated by commas, e.g. 15:00, 30:00. Suggestions need your approval.</p><label>Break points<input id="edit-breaks" placeholder="No internal breaks"></label><div id="break-suggestions" class="settings-note"></div><div class="editor-actions"><button type="button" id="use-suggestions">USE SUGGESTIONS</button><button type="button" id="analyse-breaks">ANALYSE SILENCE / BLACK FRAMES</button></div><label class="check-label"><input type="checkbox" id="edit-breaks-approved">Approve these points for internal breaks</label></fieldset>
+    <label>Description<textarea id="edit-description" maxlength="1000" rows="2"></textarea></label><div class="editor-fields"><label>Retro TV tagline<input id="edit-tagline" maxlength="300"></label><label>Goblin tagline<input id="edit-tagline-goblin" maxlength="300"></label></div><div id="editor-technical" class="settings-note"></div><p id="editor-error" role="alert"></p><div class="editor-actions"><button type="button" id="preview-media">PREVIEW FROM START</button><button type="submit" class="primary-button" id="save-media">SAVE LABELS</button></div>
+  </form></dialog>
+  <div id="channel-osd" role="status" aria-live="polite" hidden></div>
+  <dialog id="player-dialog"><div class="player-top"><div><span class="live-dot"></span><span id="player-status">NOW PLAYING</span></div><div class="player-actions"><button id="channel-down" type="button" aria-label="Previous channel" title="Previous channel">CH −</button><button id="channel-up" type="button" aria-label="Next channel" title="Next channel">CH +</button><button id="quick-label-toggle" type="button" aria-expanded="false" aria-controls="quick-label-panel" title="Edit this programme’s labels">LABELS</button><button id="return-live" type="button">LIVE</button><button id="video-fullscreen" title="Fullscreen video" aria-label="Fullscreen video">⛶</button><button id="close-player" aria-label="Close player">×</button></div></div><video id="player" autoplay playsinline tabindex="0" aria-label="Video player"></video><div class="playback-controls"><button id="playback-toggle" type="button" aria-label="Play or pause">PLAY</button><button id="playback-mute" type="button" aria-label="Mute audio">MUTE</button><label class="volume-label">Volume<input id="playback-volume" aria-label="Volume" type="range" min="0" max="1" step="0.05" value="1"></label><label id="preview-seek-label" hidden>Position<input id="preview-seek" aria-label="Preview position" type="range" min="0" max="1" step="0.1" value="0"></label><span id="playback-time"></span></div><section id="quick-label-panel" hidden aria-label="Edit on-air metadata"><form id="quick-label-form"><div class="quick-label-heading"><strong id="quick-label-heading">Programme labels</strong><button type="button" id="quick-label-close" aria-label="Close quick labels">×</button></div><p id="quick-label-file" class="settings-note"></p><label>Display title<input id="quick-label-title" maxlength="300"></label><label>Genres (comma separated)<input id="quick-label-genres" placeholder="Comedy, Animation"></label><label>Tags (comma separated)<input id="quick-label-tags"></label><fieldset><legend>Show on channels</legend><div id="quick-label-channels"></div></fieldset><p class="settings-note">Interdimensional Customs automatically shows unassigned programmes. Adding a channel removes this programme from Customs after the current showing finishes.</p><p id="quick-label-error" role="alert"></p><div class="editor-actions"><button type="submit" id="quick-label-save">SAVE LABELS</button><button type="button" id="quick-label-cancel">CANCEL</button></div></form></section><div class="player-caption"><div id="player-title"></div><div id="player-meta"></div></div><div class="crt-film" aria-hidden="true"></div></dialog>
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="bulk-dialog" aria-labelledby="bulk-heading">
+    <div class="settings-heading"><h2 id="bulk-heading">Bulk label review</h2><button type="button" id="close-bulk" aria-label="Close bulk review">×</button></div>
+    <p class="settings-note">Tick rows to approve suggestions. Manually editing a row selects it automatically. Use Save selected files to write assignments to the USB. Genres label videos; the Channels column controls where they play.</p>
+    <div class="bulk-toolbar"><label>Review <select id="bulk-scope"><option value="filtered">Current library filters</option><option value="unassigned">Unassigned programmes</option><option value="review">Media needing review</option><option value="all">All present media</option></select></label><button type="button" id="bulk-generate">GENERATE SUGGESTIONS</button><label class="import-button">IMPORT CSV / JSON<input type="file" id="bulk-import" accept=".csv,.json,text/csv,application/json"></label><button type="button" id="bulk-export">EXPORT CSV TEMPLATE</button></div>
+    <div class="library-filters"><label>Search review<input id="bulk-search" type="search" placeholder="Title, filename, folder, tags or ID"></label><label>Channel<select id="bulk-channel"><option value="">All channels</option></select></label><label>Genre<select id="bulk-genre"><option value="">All genres</option></select></label></div>
+    <div class="library-pagination"><button type="button" id="bulk-prev">PREVIOUS</button><span id="bulk-page-info"></span><button type="button" id="bulk-next">NEXT</button><label>Per page<select id="bulk-page-size"><option value="50">50</option><option value="100">100</option></select></label><button type="button" id="bulk-select-matching">SELECT ALL MATCHING</button><button type="button" id="bulk-clear-selection">CLEAR ALL SELECTIONS</button></div>
+    <details><summary>Reusable labelling rules</summary><p class="settings-note">One rule per line: keyword =&gt; genres | channels. Example: kurzgesagt =&gt; Science, Animation | Explore. Rules match whole words or phrases in filenames, folders, titles and tags.</p><textarea id="bulk-rules" rows="4" aria-label="Labelling rules" placeholder="kurzgesagt => Science, Animation | Explore"></textarea></details>
+    <fieldset class="bulk-assignment"><legend>Assign to selected rows</legend><label>Genres <input id="bulk-genres" placeholder="Comedy, Nature" list="known-genres"></label><label>Channels <input id="bulk-channels" placeholder="Bin TV, Explore" list="known-channels"></label><label>Mode <select id="bulk-mode"><option value="add">Add to existing labels</option><option value="replace">Replace labels</option></select></label><button type="button" id="bulk-assign">UPDATE SELECTED PREVIEWS</button><p class="settings-note">Comma separated. New labels and channels are created when applied. Leave a field blank to keep it unchanged.</p></fieldset>
+    <div id="bulk-summary" class="settings-note" aria-live="polite"></div><p id="bulk-error" role="alert"></p>
+    <div class="bulk-table-wrap"><table class="bulk-table"><thead><tr><th><label><input type="checkbox" id="bulk-select-all" aria-label="Select this page"> Approve page</label></th><th>FILE / ID / REASON</th><th>DISPLAY TITLE</th><th>GENRES</th><th>CHANNELS</th></tr></thead><tbody id="bulk-body"></tbody></table></div>
+    <div class="editor-actions bulk-save-actions"><button type="button" class="primary-button" id="bulk-apply">SAVE 0 SELECTED FILES</button><button type="button" id="bulk-save-rules">SAVE RULES ONLY</button><button type="button" id="bulk-cancel">CANCEL</button></div>
+    <datalist id="known-genres"></datalist><datalist id="known-channels"></datalist>
+  </dialog>
+  <script src="intro.js"></script>
+  <script src="suggestions.js"></script>
+  <script src="schedule.js"></script>
+  <script src="schedule-plans.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

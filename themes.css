@@ -1,0 +1,90 @@
+/* Themes share the same markup, catalogue, and playback controls. */
+body[data-theme="satellite"] {
+  --bg:#09236c; --panel:#163a7a; --panel-2:#10316c; --line:#5274b0;
+  --muted:#bed0f1; --text:#fff; --lime:#f1d54f;
+  background:linear-gradient(135deg,#071c59,#164998); 
+}
+body[data-theme="teletext"] {
+  --bg:#080808; --panel:#080808; --panel-2:#111; --line:#555;
+  --muted:#ddd; --text:#fff; --lime:#fff76b;
+  --sans:'Courier New',monospace; --mono:'Courier New',monospace;
+  background:var(--bg);
+}
+body[data-theme="goblin"] {
+  --bg:#141a16; --panel:#303929; --panel-2:#232d22; --line:#626e49;
+  --muted:#b7c19c; --text:#e8dfbf; --lime:#c3dc88;
+  background:radial-gradient(ellipse at top right,#303d29,var(--bg) 70%);
+}
+body[data-theme] .air-status time,
+body[data-theme] .date-chip,
+body[data-theme] .effect-button,
+body[data-theme] .rescan-button,
+body[data-theme] .programme-time,
+body[data-theme] .duration-cell,
+body[data-theme] .file-name {color:var(--text)}
+body[data-theme] .guide-head,
+body[data-theme] .channel-number,
+body[data-theme] footer,
+body[data-theme] .table-wrap th,
+body[data-theme] .table-wrap th small {color:var(--muted)}
+body[data-theme] .guide-row,
+body[data-theme] .table-wrap td {border-color:var(--line)}
+body[data-theme] .programme {background:var(--panel);border-color:var(--line);border-radius:2px}
+body[data-theme] .programme.current {background:var(--lime);color:var(--bg);border-color:var(--lime)!important}
+body[data-theme] .programme.current .programme-tag,
+body[data-theme] .programme.current .programme-time {color:var(--bg)}
+body[data-theme] .programme.current:after {background:var(--bg);opacity:.45}
+body[data-theme] .programme.next {opacity:1}
+body[data-theme] .channel-logo {border-radius:2px;background:var(--panel-2)!important;color:var(--lime)!important}
+body[data-theme] .library-note,
+body[data-theme] .table-wrap th,
+body[data-theme] code {background:var(--panel-2);color:var(--text)}
+body[data-theme] .edit-input {background:var(--bg);border-color:var(--line);color:var(--text)}
+body[data-theme] .toast,
+body[data-theme] #player-dialog {background:var(--bg);color:var(--text);border-color:var(--line)}
+body[data-theme] footer span:last-child {color:var(--lime)}
+body[data-theme] .brand-mark {border-radius:2px;box-shadow:none}
+body[data-theme="satellite"] .brand-name {font-style:italic;font-size:30px}
+body[data-theme="satellite"] .tab.active {background:var(--lime);color:var(--bg);margin:10px 0}
+body[data-theme="satellite"] .tab.active:after {display:none}
+body[data-theme="satellite"] .guide-head {background:#08265f;padding:12px}
+body[data-theme="teletext"] .brand-mark {display:none}
+body[data-theme="teletext"] .brand-name {color:#fff76b;letter-spacing:2px}
+body[data-theme="teletext"] h1 {color:#fff76b;letter-spacing:1px}
+body[data-theme="teletext"] .nav-tabs {background:#172ed1;border:0}
+body[data-theme="teletext"] .tab {color:#fff}
+body[data-theme="teletext"] .tab.active {color:#fff76b}
+body[data-theme="teletext"] .guide-head {color:#65ffff}
+body[data-theme="teletext"] .channel-name {color:#65ff79;text-transform:uppercase}
+body[data-theme="teletext"] .channel-logo {display:none}
+body[data-theme="teletext"] .guide-row {border-bottom:2px dashed var(--line)}
+body[data-theme="teletext"] .programme {border:0!important}
+body[data-theme="teletext"] .programme.next {background:#080808}
+body[data-theme="teletext"] .programme.next .programme-tag {color:#65ffff}
+body[data-theme="teletext"] .date-chip,
+body[data-theme="teletext"] .rescan-button,
+body[data-theme="teletext"] .effect-button,
+body[data-theme="teletext"] .table-wrap,
+body[data-theme="teletext"] .edit-input,
+body[data-theme="teletext"] .library-note,
+body[data-theme="teletext"] #player-dialog {border-radius:0}
+body[data-theme="goblin"] .brand-name,
+body[data-theme="goblin"] h1 {font-family:Georgia,serif;color:var(--lime);letter-spacing:.5px}
+body[data-theme="goblin"] .brand-mark {border:3px ridge #889262;background:var(--panel);color:var(--lime)}
+body[data-theme="goblin"] .guide-rows {border:4px ridge #6a7152;padding:0 9px}
+body[data-theme="goblin"] .programme {border-radius:0}
+body[data-theme="goblin"] .channel-name {font-family:var(--mono)}
+#settings-dialog {width:min(480px,calc(100vw - 32px));padding:24px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;box-shadow:0 24px 100px #000b}
+#settings-dialog::backdrop {background:#0009}
+.settings-heading {display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}
+.settings-heading h2 {margin:0;font-size:22px}
+.settings-heading button {background:transparent;border:0;color:var(--text);font-size:28px;min-width:44px;min-height:44px;cursor:pointer}
+.theme-options {border:0;margin:0;padding:0}
+.theme-options legend {font-size:13px;color:var(--muted);margin-bottom:14px}
+.theme-option {display:flex;align-items:center;gap:13px;min-height:76px;padding:14px 12px;border:1px solid var(--line);margin-bottom:10px;cursor:pointer;background:var(--panel-2)}
+.theme-option:has(input:checked) {border-color:var(--lime)}
+.theme-option input {accent-color:var(--lime);width:18px;height:18px;flex-shrink:0}
+.theme-option strong {display:block;font-size:14px}
+.theme-option small {display:block;font-size:12px;line-height:1.5;margin-top:5px;color:var(--muted)}
+.settings-note {color:var(--muted);font-size:12px;margin:18px 0 0}
+@media(max-width:760px){.nav-tabs{height:auto;min-height:60px;flex-wrap:wrap;padding:6px 0;gap:4px}.nav-spacer{flex-basis:0}.tab{min-height:42px}.effect-button,.rescan-button{min-height:40px}body[data-theme="goblin"] .brand-name{font-size:20px}.brand-tag{max-width:220px}.section-heading{flex-wrap:wrap}}
