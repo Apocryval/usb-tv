@@ -160,3 +160,8 @@ library_paths.py preserves flat installations without a data directory. When dat
 All 83 JavaScript and 69 Python tests pass, including new migration and HTTP asset/privacy tests. Rebuilt Windows executable via scripts/build.py. User specifically asked to launch the normal .bat, verify, then push: the attempted normal launcher is blocked before startup by Windows Smart App Control/Code Integrity event 3077 (unsigned executable fails signing-level policy). This is an OS block, not an app exception; no security settings were changed or alternate launch used to bypass it. Requested user decision whether to arrange normal approval/signing or allow push with live-launch validation documented as blocked. Push remains pending that decision. Source build and unit/API tests are complete, but do not claim the normal compiled app passed live playback testing.
 
 Desktop and D:/USB.tv production copies were not modified. The production app on D: was observed running and left alone. Use the root Start USB.tv.bat for development once Windows permits the build; it now retains a useful error message if startup fails.
+
+
+### Launch confirmation and push authorisation
+
+The user subsequently opened the development app through the normal .bat launcher and reported it working, then explicitly authorised pushing the reorganisation. This is a user-confirmed manual startup check; the agent did not complete its own live playback/editor check after the Windows policy block. The 152 automated tests passed before this confirmation. The push hold is lifted. No Windows security settings were changed by the agent.
