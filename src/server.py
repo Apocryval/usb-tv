@@ -20,16 +20,17 @@ import zipfile
 from catalogue import Catalogue, CatalogueConflict
 from media import analyse_breaks
 from distribution import ASSETS
+from library_paths import data_directory
 from updater import install_update
 import broadcasts
 from session import LibrarySession
 from imports import RESERVED_FOLDERS
 
-APP_ROOT = Path(__file__).resolve().parent
+APP_ROOT = Path(__file__).resolve().parent.parent
 if getattr(sys, "frozen", False):
     executable = Path(sys.executable).resolve()
     APP_ROOT = executable.parent.parent.parent if executable.parent.parent.name == "Apps" else executable.parent
-WEB_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT))
+WEB_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT)) / "web"
 LIBRARY = None
 SESSION = None
 SCANS = None
@@ -53,7 +54,7 @@ def configure_error_log(root):
         handler.close()
         logger.removeHandler(handler)
     try:
-        handler = RotatingFileHandler(Path(root) / "server-errors.log", maxBytes=1024*1024,
+        handler = RotatingFileHandler(data_directory(root) / "server-errors.log", maxBytes=1024*1024,
                                       backupCount=3, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         logger.addHandler(handler)
@@ -67,7 +68,7 @@ class ScanJobs:
     """One background scanner; durable catalogue checkpoints and progress on USB."""
     def __init__(self, library):
         self.library = library
-        self.path = library.root / "scan-job.json"
+        self.path = library.data_root / "scan-job.json"
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread = None
@@ -403,7 +404,9 @@ def main():
             parser.exit(1, f"Update failed: {error}\nClose USB.tv before updating and check the ZIP and free disk space.\n")
         return
     # Shared UI files on the USB can be updated once for every packaged platform.
-    if all((options.library_root / name).is_file() for name in ASSETS):
+    if all((options.library_root / "web" / name).is_file() for name in ASSETS):
+        WEB_ROOT = options.library_root.resolve() / "web"
+    elif all((options.library_root / name).is_file() for name in ASSETS):
         WEB_ROOT = options.library_root.resolve()
     try:
         with LibrarySession(options.library_root) as SESSION:

@@ -10,9 +10,10 @@ import os
 import subprocess
 import sys
 import hashlib
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from distribution import ASSETS, SOURCE_FILES
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def source_digest():
@@ -50,7 +51,7 @@ def current_target():
 def main():
     target = current_target()
     output = ROOT / "Apps" / target
-    work = ROOT / "build" / target
+    work = ROOT / ".local" / "build" / target
     output.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
     command = [
@@ -59,8 +60,8 @@ def main():
         "--specpath", str(work),
     ]
     for asset in sorted(ASSETS):
-        command.extend(["--add-data", f"{ROOT / asset}{';' if target.startswith('windows-') else ':'}."])
-    command.append(str(ROOT / "server.py"))
+        command.extend(["--add-data", f"{ROOT / 'web' / asset}{';' if target.startswith('windows-') else ':'}web"])
+    command.append(str(ROOT / "src" / "server.py"))
     print(f"Building {target} into {output}")
     environment = os.environ.copy()
     environment["PYINSTALLER_CONFIG_DIR"] = str(work / "config")

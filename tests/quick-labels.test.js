@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
 function fixture(playback={mode:'channel',channel:'A',mediaId:'ad'}) {
   const nodes=new Map(),choices=[{value:'A',checked:true},{value:'B',checked:true}];
   const get=id=>{

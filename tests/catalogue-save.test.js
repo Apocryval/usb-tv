@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
 
 test('simultaneous writes share a token request and keep the write header off reads',async()=>{
   const requests=[];

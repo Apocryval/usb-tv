@@ -216,8 +216,8 @@ Portable dependency files live under `E:/USBtv-AI`, outside the video folders: O
 For command-line use after a reboot, start the service first:
 
 ```powershell
-..\.build-venv\Scripts\python.exe start_local_ai.py
-..\.build-venv\Scripts\python.exe studio.py doctor
+..\.local\venv\Scripts\python.exe start_local_ai.py
+..\.local\venv\Scripts\python.exe studio.py doctor
 ```
 
 Whisper transcription currently uses CPU, and the vision model uses the RTX 5070 Ti through CUDA. The English base model is a starter choice; multilingual or difficult speech may warrant a larger/multilingual model later. Model inference checks use synthetic speech/sample video; they do not establish classification accuracy across the real collection.

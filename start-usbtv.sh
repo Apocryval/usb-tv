@@ -4,7 +4,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 run_source() {
     if command -v python3 >/dev/null 2>&1; then
-        exec python3 "$ROOT/server.py" --library-root "$ROOT" "$@"
+        exec python3 "$ROOT/src/server.py" --library-root "$ROOT" "$@"
     fi
     echo "USB.tv has not been packaged for this computer yet. Build it on this OS and CPU first." >&2
     exit 1

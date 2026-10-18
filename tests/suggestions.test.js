@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const S=require('../suggestions.js');
+const S=require('../web/suggestions.js');
 const video=(id,file,extra={})=>({id,file,title:'',genres:[],channels:[],tags:[],type:'programme',...extra});
 const catalog={genres:['Comedy','Science'],channels:[{name:'Comedy'},{name:'Explore'}],videos:[video('000001','Videos/Comedy/messy_42.mp4'),video('000002','Videos/other.mp4')]};
 test('folder genre produces a channel suggestion without using filename as title',()=>{

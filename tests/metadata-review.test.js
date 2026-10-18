@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const S=require('../suggestions.js');
+const S=require('../web/suggestions.js');
 
 test('legacy review drafts lose generated taglines without losing approvals or edits',()=>{
   const html=fs.readFileSync(require.resolve('../metadata-studio/review.html'),'utf8');

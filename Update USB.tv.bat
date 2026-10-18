@@ -26,7 +26,7 @@ if exist "Apps\windows-x64\USBtv.exe" (
   if errorlevel 1 exit /b 1
   "%UPDATE_APP%" --library-root "%UPDATE_ROOT%" --update-from "%UPDATE_ARCHIVE%"
 ) else (
-  py -3 server.py --library-root "%UPDATE_ROOT%" --update-from "%UPDATE_ARCHIVE%"
+  py -3 src\server.py --library-root "%UPDATE_ROOT%" --update-from "%UPDATE_ARCHIVE%"
 )
 set "UPDATE_RESULT=%ERRORLEVEL%"
 if exist "%UPDATE_APP%" del "%UPDATE_APP%"

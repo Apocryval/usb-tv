@@ -1,4 +1,5 @@
 """Persistent broadcast snapshots, stored separately from editable video labels."""
+from library_paths import library_file
 import json
 import math
 from catalogue import normalise_episodes
@@ -6,7 +7,7 @@ from pathlib import Path
 
 
 def read(root):
-    path = Path(root) / "broadcasts.json"
+    path = library_file(root, "broadcasts.json")
     if not path.exists():
         return {"revision": 0, "channels": {}}
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -57,7 +58,7 @@ def save(root, incoming):
     channels = incoming.get("channels")
     validate(channels)
     updated = {"revision": current["revision"] + 1, "channels": channels}
-    path = Path(root) / "broadcasts.json"
+    path = library_file(root, "broadcasts.json")
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(updated, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
     temporary.replace(path)

@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path as _TestPath
+sys.path.insert(0, str(_TestPath(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(_TestPath(__file__).resolve().parents[1] / "scripts"))
 import hashlib
 import json
 from pathlib import Path
@@ -40,7 +44,7 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual((root/name).read_bytes(), b'personal')
 
     def test_unsafe_paths_and_corrupt_files_do_not_modify_the_installation(self):
-        for name in ['catalog.json', 'Videos/movie.mp4', 'Tools/ffmpeg', '../escape.js', 'Apps/windows-x64/../../catalog.json', 'APP.JS']:
+        for name in ['catalog.json', 'Videos/movie.mp4', 'Tools/ffmpeg', 'data/catalog.json', 'data/broadcasts.json', '../escape.js', 'Apps/windows-x64/../../catalog.json', 'APP.JS']:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root/'app.js').write_bytes(b'old')
@@ -51,24 +55,27 @@ class UpdaterTests(unittest.TestCase):
             root = Path(directory)
             (root/'app.js').write_bytes(b'old')
             with self.assertRaisesRegex(ValueError, 'Damaged'):
-                install_update(self.archive(root, corrupt='server.py'), root)
+                install_update(self.archive(root, corrupt='src/server.py'), root)
             self.assertEqual((root/'app.js').read_bytes(), b'old')
 
     def test_write_failure_rolls_back_new_and_existing_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'app.js').write_bytes(b'old')
+            (root/'src').mkdir()
+            (root/'src/catalogue.py').write_bytes(b'previous source')
             archive = self.archive(root)
             import updater
             original = updater.os.replace
             def fail(source, destination):
-                if Path(source).parent.name == 'new' and Path(destination).name == 'server.py':
+                if Path(source).parent.name == 'src' and Path(destination).name == 'server.py':
                     raise OSError('simulated locked file')
                 return original(source, destination)
             with patch('updater.os.replace', side_effect=fail), self.assertRaises(RuntimeError):
                 install_update(archive, root)
             self.assertEqual((root/'app.js').read_bytes(), b'old')
-            self.assertFalse((root/'catalogue.py').exists())
+            self.assertEqual((root/'src/catalogue.py').read_bytes(), b'previous source')
+            self.assertFalse((root/'src/broadcasts.py').exists())
 
     def test_bridge_packager_uses_the_frozen_legacy_contract(self):
         with tempfile.TemporaryDirectory() as directory:

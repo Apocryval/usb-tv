@@ -1,4 +1,5 @@
 """Versioned catalogue migration, stable identities and offline scanning."""
+from library_paths import migrate_library_data
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -76,13 +77,14 @@ class Catalogue:
     def __init__(self, root, organise_new=True):
         self.organise_new = organise_new
         self.root = Path(root).resolve()
-        self.path = self.root / "catalog.json"
+        self.data_root = migrate_library_data(self.root)
+        self.path = self.data_root / "catalog.json"
         self.lock = threading.RLock()
         self.scan_lock = threading.Lock()
         self.root.mkdir(parents=True, exist_ok=True)
         for name in ("Videos", "Adverts"):
             (self.root / name).mkdir(exist_ok=True)
-        self.folder_config = self.root / "video-folders.json"
+        self.folder_config = self.data_root / "video-folders.json"
         self.device = sys.platform + ":" + platform.node()
         self.video_root = self.root / "Videos"
         if self.folder_config.exists():
@@ -157,7 +159,7 @@ class Catalogue:
             current = json.loads(self.path.read_text(encoding="utf-8"))
             revision = current.get("revision", 0)
             if current.get("version", 1) < 2:
-                backup = self.root / "catalog.v1.backup.json"
+                backup = self.data_root / "catalog.v1.backup.json"
                 if not backup.exists():
                     shutil.copy2(self.path, backup)
         data["revision"] = revision + 1
@@ -261,7 +263,7 @@ class Catalogue:
             by_hash = {}
             for item in old:
                 by_hash.setdefault(item.get("fingerprint", ""), []).append(item)
-            cache_path = self.root / "scan-cache.jsonl"
+            cache_path = self.data_root / "scan-cache.jsonl"
             cache = {}
             journal_dirty = False
             if cache_path.exists():
@@ -443,7 +445,7 @@ class Catalogue:
                      or item["audio_analysis"].get("status") == "failed" and time.time() - item["audio_analysis"].get("measured_at", 0) > 3600)]
             if not queue:
                 return data
-            cache_path = self.root / "loudness-cache.jsonl"
+            cache_path = self.data_root / "loudness-cache.jsonl"
             cache = {}
             if cache_path.exists():
                 for line in cache_path.read_text(encoding="utf-8").splitlines():

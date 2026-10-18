@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const S = require('../schedule.js');
+const S = require('../web/schedule.js');
 const media = (id, duration, extra={}) => ({id, duration, title:id, type:'programme', channels:['Bin TV'], enabled:true, ...extra});
 const catalog = videos => ({videos, channels:[{name:'Bin TV'}], settings:{ad_interval:900, ad_length:60}});
 

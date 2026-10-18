@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {gainFor} = require('../audio.js');
+const {gainFor} = require('../web/audio.js');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const item = gain_db => ({fingerprint:'abc',audio_analysis:{version:1,fingerprint:'abc',status:'ready',gain_db,true_peak_db:-30,integrated_lufs:-24}});
@@ -59,7 +59,7 @@ test('guide preview and full player share levelling and volume but keep independ
   }
   const window={AudioContext};
   const document={querySelector:id=>id==='#player'?player:preview,addEventListener(){}};
-  vm.runInNewContext(fs.readFileSync(require.resolve('../audio.js'),'utf8'),{window,document});
+  vm.runInNewContext(fs.readFileSync(require.resolve('../web/audio.js'),'utf8'),{window,document});
   const api=window.USBTvAudio,clip=item(-9);
   api.setTrack(clip,preview);api.setTrack(clip);
   assert.equal(contexts,1);assert.equal(sources,2);
@@ -96,7 +96,7 @@ test('live guide supplies saved audio measurements even when its schedule snapsh
     Schedule:{locate:()=>({segment:{video:frozen},block:{video:frozen},key:'segment',start:0,end:60000})},
     timeline(){},document:{hidden:false},displayTitle:()=>'',formatTime:()=>'',videoUrl:file=>'/'+file,
     window:{USBTvAudio:{setTrack:(...args)=>calls.push(args)}}};
-  const app=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const app=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   vm.runInNewContext(app.slice(app.indexOf('function syncGuidePreview()'),app.indexOf('const libraryView =')),context);
   context.syncGuidePreview();
   assert.equal(calls[0][0],measured);assert.equal(calls[0][1],get('#guide-preview-video'));
@@ -112,7 +112,7 @@ test('advanced audio switches mirror the saved setting and change sound without 
     window:{USBTvAudio:{setProfile:value=>calls.push(['profile',value]),setEnabled:value=>calls.push(['audio',value]),unlock:()=>calls.push(['unlock'])}},
     refreshPlaybackAudio(){},async saveCatalog(){calls.push(['save',context.state.catalog.settings.volume_levelling]);},
     async refreshAudioStatus(){},showToast(){},rescan(){throw Error('An audio comparison must not start a scan');}};
-  const app=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const app=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   vm.runInNewContext(app.slice(app.indexOf('function applyAudioSetting()'),app.indexOf('function refreshPlaybackAudio()'))+
     app.slice(app.indexOf('async function changeVolumeLevelling('),app.indexOf("$('#auto-imports').addEventListener")),context);
   await events.get('#player-volume-levelling')({target:{checked:false}});
@@ -125,13 +125,13 @@ test('advanced audio switches mirror the saved setting and change sound without 
   assert.equal(context.state.catalog.settings.volume_profile,'balanced');
   for(const id of ['volume-profile','advanced-volume-profile','player-volume-profile'])assert.equal(get('#'+id).value,'balanced');
   assert.equal(calls.filter(call=>call[0]==='profile').at(-1)[1],'balanced');
-  const html=fs.readFileSync(require.resolve('../index.html'),'utf8');
+  const html=fs.readFileSync(require.resolve('../web/index.html'),'utf8');
   assert.match(html,/<label[^>]*data-advanced[^>]*hidden[^>]*><input id="player-volume-levelling"/);
   assert.match(html,/<div[^>]*data-advanced[^>]*hidden[^>]*><label[^>]*><input id="advanced-volume-levelling"/);
 });
 
 test('audio status distinguishes cached playback from new FFmpeg measurements',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8'),context={};
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8'),context={};
   vm.runInNewContext(source.slice(source.indexOf('function audioStatusMessage('),source.indexOf('async function refreshAudioStatus(')),context);
   const status={available:false,checked:6,total:7,enabled:true};
   assert.match(context.audioStatusMessage(status,true),/Saved levels are applied/);

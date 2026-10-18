@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 import tempfile
 import zipfile
-from distribution import UPDATE_FILES, TARGET_APPS, LEGACY_UPDATE_FILES
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from distribution import UPDATE_FILES, TARGET_APPS, LEGACY_UPDATE_FILES, legacy_source
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def main():
@@ -39,7 +41,8 @@ def main():
         manifest = {"format": 1 if options.legacy_bridge else 2, "files": {}}
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
             for name in sorted(files):
-                data = (ROOT / name).read_bytes()
+                data = (ROOT / (legacy_source(name) if options.legacy_bridge else name)).read_bytes()
+                if name.endswith((".sh", ".command")): data = data.replace(b"\r\n", b"\n")
                 manifest["files"][name] = hashlib.sha256(data).hexdigest()
                 archive.writestr(name, data)
             archive.writestr("update-manifest.json", json.dumps(manifest, indent=2) + "\n")

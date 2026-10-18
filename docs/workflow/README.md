@@ -1,6 +1,6 @@
 # Local video classification workflow
 
-The executable authoring workflow lives in `../metadata-studio/`; this folder holds its interchange/design notes. The canonical channel and genre policy is `../metadata-studio/taxonomy.json`. User-supplied channel definitions and a TV-style genre vocabulary were agreed on 2026-10-17. `taxonomy.draft.json` now points to the canonical policy instead of duplicating it.
+The executable authoring workflow lives in `../../metadata-studio/`; this folder holds its interchange/design notes. The canonical channel and genre policy is `../../metadata-studio/taxonomy.json`. User-supplied channel definitions and a TV-style genre vocabulary were agreed on 2026-10-17. `taxonomy.draft.json` now points to the canonical policy instead of duplicating it.
 
 ## Policy
 

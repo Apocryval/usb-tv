@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const S=require('../suggestions.js');
+const S=require('../web/suggestions.js');
 const videos=[
   {id:'000001',title:'Quantum physics',file:'Videos/science.mp4',duration:3000,type:'programme',genres:['Education'],channels:['TTTV'],tags:['physics','Science'],enabled:true},
   {id:'000002',title:'Music night',file:'Videos/physics.mp4',duration:60,type:'programme',genres:['Music'],channels:[],tags:['Music'],enabled:false},
@@ -64,7 +64,7 @@ test('bulk add/remove/replace preserves unrelated data and blank fields, with ex
 });
 
 test('bulk filters use editable row labels plus catalogue duration and retain original selection objects',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:''});return nodes.get(id);};
   const rows=[{...videos[0],tags:['edited'],selected:true},{...videos[1],tags:['edited'],selected:false}];
@@ -79,7 +79,7 @@ test('bulk filters use editable row labels plus catalogue duration and retain or
 });
 
 test('bulk manipulation updates only selected previews and clears pending controls without writing catalogue data',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:''});return nodes.get(id);};
   const rows=[{...videos[0],selected:true},{...videos[1],selected:false}];

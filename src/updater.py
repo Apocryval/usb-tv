@@ -13,6 +13,9 @@ from distribution import UPDATE_FILES, LEGACY_UPDATE_FILES, TARGET_APPS
 
 def application_file(name):
     """Allow new app files while keeping media, tools and runtime data private."""
+    if name == "data/.gitkeep": return True
+    known = UPDATE_FILES | LEGACY_UPDATE_FILES
+    if name not in known and name.casefold() in {item.casefold() for item in known}: return False
     parts = PurePosixPath(name).parts
     if not parts or "/".join(parts) != name or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.\-]*", part) or part in (".", "..") or part.endswith((" ", ".")) for part in parts):
         return False
@@ -20,6 +23,8 @@ def application_file(name):
         return (PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"}
                 or name in {"requirements-build.txt", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
                             "update-usbtv.sh", "update-usbtv.command", "Update USB.tv.bat"})
+    if len(parts) >= 2 and parts[0] in {"src", "web", "scripts", "docs"}:
+        return PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"} or name == "scripts/requirements-build.txt"
     return len(parts) >= 3 and parts[0] == "Apps" and parts[1] in TARGET_APPS
 
 

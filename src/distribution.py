@@ -6,12 +6,13 @@ TARGET_APPS = {
     "linux-x64": "Apps/linux-x64/USBtv",
     "windows-x64": "Apps/windows-x64/USBtv.exe",
 }
-SOURCE_FILES = ASSETS | {
-    "server.py", "catalogue.py", "media.py", "imports.py", "broadcasts.py", "session.py", "distribution.py", "updater.py",
-    "build.py", "package_update.py", "requirements-build.txt", "README.md",
-    "BUILD-AND-UPDATE.md", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
-    "update-usbtv.sh", "update-usbtv.command", "Update USB.tv.bat",
-}
+SOURCE_FILES = {"web/" + name for name in ASSETS} | {
+    "src/" + name for name in ("server.py", "catalogue.py", "media.py", "imports.py", "broadcasts.py", "session.py", "distribution.py", "updater.py", "library_paths.py")
+} | {"scripts/build.py", "scripts/package_update.py", "scripts/requirements-build.txt",
+     "README.md", "docs/BUILD-AND-UPDATE.md", "docs/USER-GUIDE.md", "data/.gitkeep",
+     "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
+     "update-usbtv.sh", "update-usbtv.command", "Update USB.tv.bat"}
+
 UPDATE_FILES = SOURCE_FILES | set(TARGET_APPS.values()) | {
     f"Apps/{target}/source-sha256.txt" for target in TARGET_APPS
 }
@@ -30,3 +31,12 @@ LEGACY_UPDATE_FILES = {
     "Apps/darwin-arm64/source-sha256.txt", "Apps/linux-x64/source-sha256.txt",
     "Apps/windows-x64/source-sha256.txt",
 }
+
+
+def legacy_source(name):
+    """Map the frozen bridge contract onto the reorganised source tree."""
+    if name in ASSETS: return "web/" + name
+    if name in {"build.py", "package_update.py", "requirements-build.txt"}: return "scripts/" + name
+    if name == "BUILD-AND-UPDATE.md": return "docs/" + name
+    if name.endswith(".py"): return "src/" + name
+    return name

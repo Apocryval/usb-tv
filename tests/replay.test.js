@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const S=require('../schedule.js');
+const S=require('../web/schedule.js');
 const video=(id,duration,extra={})=>({id,duration,type:'programme',channels:['A'],...extra});
 const catalog={videos:[video('one',60),video('two',80),video('three',100)],channels:[{name:'A',ad_length:0}],settings:{}};
 
@@ -43,7 +43,7 @@ test('previous crosses a pending lineup boundary using the earlier broadcast rot
 });
 
 test('replay follows its own segment cursor through loading delays and rejoins live at the catch-up point',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},load(){},play(){return Promise.resolve();}});return nodes.get(id);};
   const line=S.buildCycle(catalog,'A','fixed',0),now=610000;
@@ -64,7 +64,7 @@ test('replay follows its own segment cursor through loading delays and rejoins l
 });
 
 test('loading paused replay disables native autoplay and stays paused after metadata arrives',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8'),nodes=new Map();
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8'),nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,{load(){},pause(){this.paused=true;},play(){assert.fail('Paused replay must not play');}});return nodes.get(id);};
   const line=S.buildCycle(catalog,'A','fixed',0),playback={mode:'replay',channel:'A',line,cursor:500000};
   const context={state:{playback,catalog},Schedule:S,$:get,Date:{now:()=>610000},window:{},displayTitle:v=>v.id,
@@ -75,7 +75,7 @@ test('loading paused replay disables native autoplay and stays paused after meta
 });
 
 test('seeking again before metadata loads honours the latest position and autoplay intent',()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8'),nodes=new Map();let plays=0;
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8'),nodes=new Map();let plays=0;
   const get=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},load(){this.currentTime=0;},paused:true,pause(){},play(){plays++;return Promise.resolve();}});return nodes.get(id);};
   const line=S.buildCycle(catalog,'A','fixed',0),playback={mode:'replay',channel:'A',line,cursor:500000};
   const context={state:{playback,catalog},Schedule:S,$:get,Date:{now:()=>610000},window:{},displayTitle:v=>v.id,

@@ -2,8 +2,8 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const S=require('../schedule.js');
-const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+const S=require('../web/schedule.js');
+const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
 
 test('tuning keys and automatic focus do not reveal controls; mouse, Tab and pause do',()=>{
   const classes=new Set(),listeners=new Map(),windowKeys=[];

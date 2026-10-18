@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
 const functions=source.slice(source.indexOf('function chaosRandomInt'),source.indexOf('let chaosTransitionTimer'));
 
 test('Chaos includes disabled files and adverts once each, excluding missing files, without modifying library order',()=>{

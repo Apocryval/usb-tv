@@ -2,9 +2,9 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
-const S = require('../schedule.js');
+const S = require('../web/schedule.js');
 const context = {USBTvSchedule:S,structuredClone};
-vm.runInNewContext(fs.readFileSync(require.resolve('../schedule-plans.js'),'utf8'),context);
+vm.runInNewContext(fs.readFileSync(require.resolve('../web/schedule-plans.js'),'utf8'),context);
 const P = context.USBTvPlans;
 const video = {id:'000001',file:'Videos/season.mp4',title:'Season',fingerprint:'same',duration:3600,
   type:'programme',channels:['A'],episode_review:'multiple',breaks_approved:true,break_points:[600,1800,2500],

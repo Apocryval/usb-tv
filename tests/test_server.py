@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path as _TestPath
+sys.path.insert(0, str(_TestPath(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(_TestPath(__file__).resolve().parents[1] / "scripts"))
 import json
 import tempfile
 import threading
@@ -49,6 +53,15 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as caught:
                 urlopen(Request(self.base + path, headers=headers))
             self.assertEqual(caught.exception.code, status)
+            caught.exception.close()
+
+    def test_reorganised_web_assets_are_served_without_exposing_source_or_state(self):
+        with urlopen(self.base + '/app.js') as response:
+            self.assertIn(b'openQuickLabels', response.read())
+        for path in ['/data/catalog.json', '/src/server.py', '/scripts/build.py', '/docs/PROJECT-HANDOFF.md', '/.local/backups/pre-layout-library/catalog.json']:
+            with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
+                urlopen(self.base + path)
+            self.assertEqual(caught.exception.code, 404)
             caught.exception.close()
 
     def test_catalogue_roundtrip_and_assets(self):

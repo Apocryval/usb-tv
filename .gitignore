@@ -42,3 +42,8 @@ Tools/
 
 GitHub/
 server-errors.log*
+
+# Development state and local archives
+.local/
+data/*
+!data/.gitkeep

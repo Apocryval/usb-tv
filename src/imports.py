@@ -1,4 +1,5 @@
 """Number new imports and publish verified MP4s without replacing existing files."""
+from library_paths import library_file
 from pathlib import Path
 import errno
 import hashlib
@@ -43,7 +44,7 @@ class ImportManager:
     def __init__(self, root, folders, known, files):
         self.root = Path(root)
         self.folders = {name: Path(path).resolve() for name, path in folders.items()}
-        self.path = self.root / "imports.json"
+        self.path = library_file(self.root, "imports.json")
         self.data = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {"version": 1, "next_reference": 1, "jobs": {}}
         if self.data.get("version") != 1 or not isinstance(self.data.get("jobs"), dict):
             raise ValueError("imports.json is invalid; restore its backup before importing new files.")

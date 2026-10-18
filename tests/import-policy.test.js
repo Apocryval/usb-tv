@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const S=require('../suggestions.js');
+const S=require('../web/suggestions.js');
 const video={id:'000001',file:'Videos/test.mp4',fingerprint:'same',title:'My title',type:'programme',
   genres:['Comedy'],channels:['TTTV'],tags:['My tag'],description:'My description',tagline:'My hook',tagline_goblin:'My goblin hook'};
 const incoming={id:'000001',file:video.file,fingerprint:'same',title:'AI title',type:'advert',
@@ -44,7 +44,7 @@ test('all import policies retain content identity validation',()=>{
 });
 
 test('UI import protects edited drafts while leaving saved catalogue unchanged and imported rows unselected',async()=>{
-  const source=fs.readFileSync(require.resolve('../app.js'),'utf8');
+  const source=fs.readFileSync(require.resolve('../web/app.js'),'utf8');
   const nodes=new Map();const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:''});return nodes.get(id);};
   get('#bulk-import-policy').value='preserve';
   const original=JSON.stringify(video);

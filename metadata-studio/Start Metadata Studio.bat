@@ -1,12 +1,12 @@
 @echo off
 cd /d "%~dp0"
-if exist "..\.build-venv\Scripts\python.exe" (
-  "..\.build-venv\Scripts\python.exe" start_local_ai.py
+if exist "..\.local\venv\Scripts\python.exe" (
+  "..\.local\venv\Scripts\python.exe" start_local_ai.py
   if errorlevel 1 (
     pause
     exit /b 1
   )
-  "..\.build-venv\Scripts\python.exe" studio.py %*
+  "..\.local\venv\Scripts\python.exe" studio.py %*
   pause
   exit /b
 )

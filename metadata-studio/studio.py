@@ -21,6 +21,11 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
+def library_file(root, name):
+    newer = root / "data" / name
+    return newer if newer.is_file() else root / name
+
+
 HOME = Path(__file__).resolve().parent
 PIPELINE_VERSION = 2
 METADATA_VERSION = 4
@@ -251,7 +256,7 @@ def source_path(video, root, config):
     base = root / relative.parts[0]
     if relative.parts[0] == "Videos":
         configured = config.get("video_root")
-        mapping = root / "video-folders.json"
+        mapping = library_file(root, "video-folders.json")
         if not configured and mapping.is_file():
             configured = read_json(mapping).get(sys.platform + ":" + platform.node())
         if configured:
@@ -518,7 +523,7 @@ def main():
     if not root_value:
         raise ValueError("Set library_root or pass --library PATH.")
     root = Path(root_value).expanduser().resolve()
-    catalog = read_json(root / "catalog.json")
+    catalog = read_json(library_file(root, "catalog.json"))
     unavailable = {c["name"] for c in policy["channels"]} - {c["name"] for c in catalog.get("channels", [])}
     if unavailable:
         raise ValueError("Add the policy's channels in USB.tv before analysing: " + ", ".join(sorted(unavailable)))

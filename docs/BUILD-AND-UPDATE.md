@@ -1,5 +1,7 @@
 # Build and update USB.tv
 
+The development source is in `src/` and `web/`, build tools in `scripts/`, saved state in `data/`, and local build tooling in `.local/`. Run commands below from the project root.
+
 The supported targets are Apple silicon Mac, Windows x64, and Linux x64 (Mint / Steam Deck). Build each executable on its own operating system. Python and PyInstaller are only needed on the build computers; the finished apps bundle their runtime.
 
 ## First Windows build
@@ -9,9 +11,9 @@ The supported targets are Apple silicon Mac, Windows x64, and Linux x64 (Mint / 
 3. Open PowerShell in that folder and run:
 
 ```powershell
-py -3.13 -m venv .build-venv
-.\.build-venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\.build-venv\Scripts\python.exe build.py
+py -3.13 -m venv .local/venv
+.\.local\venv\Scripts\python.exe -m pip install -r scripts/requirements-build.txt
+.\.local\venv\Scripts\python.exe scripts/build.py
 ```
 
 The result is `Apps\windows-x64\USBtv.exe` and `source-sha256.txt`. Copy the entire `Apps\windows-x64` folder back to the main project. Launch with `Start USB.tv.bat`. Keep its window open during playback.
@@ -25,9 +27,9 @@ Copy this same project snapshot to the laptop. In a terminal in that folder:
 ```sh
 sudo apt update
 sudo apt install python3 python3-venv
-python3 -m venv .build-venv
-.build-venv/bin/python -m pip install -r requirements-build.txt
-.build-venv/bin/python build.py
+python3 -m venv .local/venv
+.local/venv/bin/python -m pip install -r scripts/requirements-build.txt
+.local/venv/bin/python scripts/build.py
 ```
 
 Copy the entire `Apps/linux-x64` folder, including `source-sha256.txt`, back to the main project. Run `sh ./start-usbtv.sh` on Mint or in Steam Deck Desktop Mode. The launcher copies the executable into a user cache so it can run from an exFAT/noexec USB drive.
@@ -37,19 +39,19 @@ Copy the entire `Apps/linux-x64` folder, including `source-sha256.txt`, back to 
 On the Apple silicon Mac, in the same project snapshot:
 
 ```sh
-python3 -m venv .build-venv
-.build-venv/bin/python -m pip install -r requirements-build.txt
-.build-venv/bin/python build.py
+python3 -m venv .local/venv
+.local/venv/bin/python -m pip install -r scripts/requirements-build.txt
+.local/venv/bin/python scripts/build.py
 ```
 
 Keep `Apps/darwin-arm64` with the other two folders. The Mac build is unsigned by an Apple developer identity; macOS may ask you to allow it through Privacy & Security.
 
 ## Make one update for all three
 
-After any application changes, rebuild all three targets from the same source snapshot and collect their whole `Apps/<target>` folders in one project. Then run on any build computer (Windows: substitute `.build-venv\Scripts\python.exe`):
+After any application changes, rebuild all three targets from the same source snapshot and collect their whole `Apps/<target>` folders in one project. Then run on any build computer (Windows: substitute `.local/venv\Scripts\python.exe`):
 
 ```sh
-.build-venv/bin/python package_update.py
+.local/venv/bin/python scripts/package_update.py
 ```
 
 This creates `dist/USBtv-all-platforms.zip`. Packaging refuses missing builds or mismatched source stamps. It includes all three executables, shared UI files, source and launchers. It does **not** include `catalog.json`, `Videos/`, `Adverts/`, or `Tools/`.
@@ -59,10 +61,10 @@ This creates `dist/USBtv-all-platforms.zip`. Packaging refuses missing builds or
 The pre-audio/CRT/import updater accepts only its original exact file list. It cannot install a ZIP containing newly added application files. After collecting all three **newly rebuilt** native apps, also run:
 
 ```sh
-.build-venv/bin/python package_update.py --legacy-bridge
+.local/venv/bin/python scripts/package_update.py --legacy-bridge
 ```
 
-On Windows, use `.build-venv\Scripts\python.exe` instead. This creates `dist/USBtv-legacy-bridge.zip` with the frozen file list understood by that older updater. Install the bridge using the existing update launcher, then run the newly installed update launcher again and install `USBtv-all-platforms.zip`. Finish both updates before opening the player or running source mode: the bridge updates the bundled updater but deliberately omits files that the older installer cannot accept. Keep both ZIPs available until the full update succeeds. The bridge is for the known pre-audio/CRT/import layout; if another historical version rejects it, use the complete fresh application files while preserving personal library data.
+On Windows, use `.local/venv\Scripts\python.exe` instead. This creates `dist/USBtv-legacy-bridge.zip` with the frozen file list understood by that older updater. Install the bridge using the existing update launcher, then run the newly installed update launcher again and install `USBtv-all-platforms.zip`. Finish both updates before opening the player or running source mode: the bridge updates the bundled updater but deliberately omits files that the older installer cannot accept. Keep both ZIPs available until the full update succeeds. The bridge is for the known pre-audio/CRT/import layout; if another historical version rejects it, use the complete fresh application files while preserving personal library data.
 
 Fresh installations use the full ZIP directly. Updated installations accept format-2 packages, which can add new application modules while rejecting media, tools, runtime JSON data, unsafe paths, duplicate names and invalid checksums. The GitHub build artifact contains both ZIPs.
 
@@ -86,3 +88,7 @@ The packaged server now prefers the complete set of shared HTML/CSS/JavaScript f
 ## Optional: one build action later
 
 If you put the source in a GitHub repository, choose **Actions → Build USB.tv apps → Run workflow**. It builds all three on native runners and produces the **USBtv-all-platforms** artifact containing the single update ZIP. Download the artifact, extract its outer GitHub ZIP, then use the contained `USBtv-all-platforms.zip` with the updater. Tags starting with `v` also trigger a build. Nothing is published automatically.
+
+## Reorganised layout and older installations
+
+The format-2 installer now accepts application files under `src/`, `web/`, `scripts/` and `docs/`. Personal `data/*.json` files are never update payloads; only the empty `data/.gitkeep` marker is shipped. Startup migrates old root-level saved state after acquiring the library session lock. An older updater may reject these new application paths: install the legacy bridge first, then the complete ZIP, before launching. The bridge contract stays frozen; its old names are mapped onto the new source layout when packaging. No update has been applied to the existing production USB.
