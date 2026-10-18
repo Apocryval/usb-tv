@@ -39,6 +39,10 @@
 .programme[disabled] {cursor:default}
 .time-ruler {padding-right:0}
 .guide-head {padding-left:0!important;padding-right:0!important}
+.admin-playback-option {margin:0 0 18px;font-size:12px;color:var(--muted)}
+.admin-playback-option label {display:flex;align-items:center;gap:8px;color:var(--text);cursor:pointer}
+.admin-playback-option input {accent-color:var(--lime)}
+.admin-playback-option p {margin:6px 0 0;line-height:1.5}
 .player-top #return-live {font:11px var(--mono);min-height:36px;color:var(--lime)}
 .library-note span:last-child {overflow-wrap:anywhere}
 @media(max-width:560px){.editor-fields{grid-template-columns:1fr}.channel-setting{gap:12px}.channel-setting strong{width:100%}#editor-dialog{padding:16px}.editor-actions button{flex:1}.brand-tag{max-width:175px;font-size:8px}.air-status{gap:5px}.air-status time{margin-left:3px}.section-heading{margin-bottom:20px}.time-ruler span:last-child{display:none}}
@@ -130,6 +134,9 @@ body[data-theme="goblin"] .preview-badge {color:#c7df87}
 .time-ruler span:first-child {transform:none}
 .time-ruler span:last-child {display:block;transform:translateX(-100%)}
 .schedule-track {gap:0}
+.schedule-track .programme {transition:width 1s linear}
+.guide-rows[data-live="true"] .schedule-track::before {background:var(--lime);width:2px;z-index:1;pointer-events:none}
+@media(prefers-reduced-motion:reduce) {.schedule-track .programme {transition:none}}
 .schedule-track .programme {min-width:0;max-width:none;padding-inline:6px;border-radius:0;box-shadow:inset -1px 0 var(--line)}
 .schedule-track .programme-title {width:100%;min-width:0}
 .schedule-track .programme-tag,.schedule-track .programme-time {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -147,6 +154,12 @@ body[data-theme="goblin"] .preview-badge {color:#c7df87}
 .library-filters label, .library-pagination label {display:flex;flex-direction:column;gap:5px;font-size:12px}
 .library-filters label:first-child {flex:1;min-width:220px}
 .library-filters input, .library-filters select, .library-pagination select {font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:8px}
+.library-filters input[type="number"] {width:130px}
+.library-tags {font:11px var(--mono);line-height:1.5;color:var(--lime);max-width:320px;overflow-wrap:anywhere;margin:6px 0}
+.media-refinements {border:1px solid var(--line);padding:12px;margin:10px 0;border-radius:5px}
+.media-refinements summary {cursor:pointer;font:12px var(--mono);color:var(--lime)}
+.media-refinements .library-filters label:first-child {flex:initial;min-width:0}
+#bulk-filter-note:empty,#library-filter-note:empty {display:none}
 .library-pagination {align-items:center;font-size:12px}
 .scan-progress {display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:16px 0;font-size:12px}
 .scan-progress[hidden], .scan-progress [hidden] {display:none}
@@ -154,3 +167,17 @@ body[data-theme="goblin"] .preview-badge {color:#c7df87}
 #scan-message {overflow-wrap:anywhere;flex:1;min-width:200px}
 #scan-errors {width:100%}
 #scan-error-text {white-space:pre-wrap;max-height:180px;overflow:auto}
+
+.channel-preview-screen {min-width:0}
+.preview-audio-controls {display:flex;justify-content:flex-end;margin-top:6px}
+#preview-mute {display:grid;place-items:center;width:32px;height:30px;padding:4px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:4px;cursor:pointer}
+#preview-mute:hover {color:var(--lime);border-color:currentColor}
+#preview-mute:focus-visible {outline:2px solid var(--lime);outline-offset:2px}
+#preview-mute [hidden] {display:none}
+@media(max-width:680px){.channel-preview-screen{width:min(100%,360px);justify-self:center}.channel-preview-screen .channel-preview-monitor{width:100%}}
+
+#episode-review-panel {margin:16px 0;padding:12px;border:1px solid var(--line)}
+#episode-review-panel summary {cursor:pointer;color:var(--lime)}
+.episode-row {display:grid;grid-template-columns:minmax(140px,1fr) 100px 100px;gap:10px;margin:12px 0;padding:12px;border:1px solid var(--line)}
+.episode-row .editor-actions {grid-column:1/-1;flex-wrap:wrap}
+@media(max-width:680px){.episode-row{grid-template-columns:1fr 1fr}.episode-row>label:first-child{grid-column:1/-1}}

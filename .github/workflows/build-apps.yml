@@ -63,9 +63,11 @@ jobs:
           path: Apps/darwin-arm64
       - name: Assemble complete update ZIP
         run: python package_update.py
+      - name: Assemble one-time legacy updater bridge
+        run: python package_update.py --legacy-bridge
       - uses: actions/upload-artifact@v4
         with:
           name: USBtv-all-platforms
-          path: dist/USBtv-all-platforms.zip
+          path: dist/USBtv-*.zip
           if-no-files-found: error
           retention-days: 30

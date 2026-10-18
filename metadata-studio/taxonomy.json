@@ -1,0 +1,266 @@
+{
+  "status": "ready",
+  "policy_version": "channels-v1-genres-v1-curation1",
+  "channel_overlap": "multiple_allowed",
+  "fallback": "Return channels: [] when nothing fits. Never assign Interdimensional Customs; USB.tv handles it automatically.",
+  "channels": [
+    {
+      "name": "Cartoons",
+      "description": "Any and all animated content. Animation is the medium, not an age group or tone.",
+      "include": [
+        "2D or 3D animation, stop motion, anime, animated shows and animated internet clips",
+        "Animated music videos and animated sketches can also match other channels"
+      ],
+      "exclude": [
+        "Pure live action with incidental graphics or a brief animated logo"
+      ],
+      "positive_examples": [
+        "The Simpsons",
+        "Animated music video"
+      ],
+      "negative_examples": []
+    },
+    {
+      "name": "Documentaries",
+      "description": "Anything educational, including serious documentaries and silly, dumb, zany or informal learning.",
+      "include": [
+        "Documentaries, explainers, factual analysis and learning",
+        "Vsauce, CGP Grey, informative tier lists",
+        "Educational comedy when there is substantive explanation or information"
+      ],
+      "exclude": [
+        "A tier-list format or scientific-sounding premise alone, with no substantive educational content"
+      ],
+      "positive_examples": [
+        "Vsauce",
+        "CGP Grey",
+        "An informative tier list"
+      ],
+      "negative_examples": []
+    },
+    {
+      "name": "Interdimensional Cable",
+      "description": "Shitty humour, randomness and intentionally surreal or nonsensical premises; funny because it makes no sense.",
+      "include": [
+        "Absurd edits, bizarre premises, surreal internet comedy and deliberately incoherent sketches",
+        "Randomness that is itself the joke"
+      ],
+      "exclude": [
+        "Ordinary comedy solely because it is funny",
+        "A weak match used as a universal miscellaneous bucket"
+      ],
+      "positive_examples": [],
+      "negative_examples": []
+    },
+    {
+      "name": "Sunday Morning Prerecorded",
+      "description": "A spoof of SNL: sketch/skit-based comedy.",
+      "include": [
+        "Saturday Night Live/SNL sketches and digital shorts",
+        "MADtv, The Whitest Kids U Know, and other skit-based content",
+        "Recognisable sketch formats, including musical sketches"
+      ],
+      "exclude": [
+        "Stand-up or general funny clips without a sketch/skit structure"
+      ],
+      "positive_examples": [
+        "SNL",
+        "MADtv",
+        "The Whitest Kids U Know"
+      ],
+      "negative_examples": []
+    },
+    {
+      "name": "Now That's What I Call Shit!",
+      "description": "Music videos and anything predominantly music.",
+      "include": [
+        "Music videos, performances, songs, remixes and musical mashups",
+        "Animated or comedic music where listening to the music is the primary experience"
+      ],
+      "exclude": [
+        "Background music alone",
+        "Spoken music analysis or artist interviews that are predominantly speech"
+      ],
+      "positive_examples": [
+        "Music video",
+        "Predominantly musical remix",
+        "User-confirmed Buffy: Once More, with Feeling musical excerpt"
+      ],
+      "negative_examples": []
+    },
+    {
+      "name": "TTTV",
+      "description": "Personal-interest channel: physics, gay/LGBTQ+ subjects, drag queens, and SNL. Any one of these interests is sufficient.",
+      "include": [
+        "Physics content, whether educational or entertaining",
+        "Gay/LGBTQ+ themes, explicit references, stories and culture",
+        "Drag queens, drag performances and drag-related content",
+        "SNL content"
+      ],
+      "exclude": [
+        "Guessing a real person's sexuality from appearance or mannerisms",
+        "All science by default: physics is the specified science interest"
+      ],
+      "positive_examples": [
+        "Physics explainer",
+        "Drag performance",
+        "SNL sketch",
+        "User-confirmed Buffy: Once More, with Feeling musical excerpt"
+      ],
+      "negative_examples": []
+    },
+    {
+      "name": "Goblin TV",
+      "description": "Team Fortress 2, goblincore, and very short surreal content.",
+      "include": [
+        "Team Fortress 2/TF2 footage, machinima, animations and memes",
+        "Goblincore: earthy, mossy, mushroomy, woodland, creature/foraging/collected-trinket aesthetics",
+        "Very short surreal clips, which can overlap with Interdimensional Cable"
+      ],
+      "exclude": [
+        "Every fantasy video simply because goblins might exist",
+        "Ordinary short clips without surreal content"
+      ],
+      "positive_examples": [
+        "TF2 clip",
+        "Goblincore montage",
+        "Very short surreal meme"
+      ],
+      "negative_examples": [],
+      "provisional_short_surreal_seconds": 60
+    },
+    {
+      "name": "CRTV",
+      "description": "Content originally released strictly before 2005 (2004 or earlier). This is an era channel, independent of genre.",
+      "include": [
+        "Episodes, films, sketches and clips with supported original release year before 2005",
+        "Qualifying Voyager, Friends, Buffy the Vampire Slayer and old Simpsons episodes"
+      ],
+      "exclude": [
+        "Content released in 2005 or later",
+        "Modern work with a retro/CRT visual style alone",
+        "Assigning an old series' entire run without establishing the relevant episode era",
+        "Using a modern upload, remaster, file modification or container creation date as the original release date"
+      ],
+      "positive_examples": [
+        "Pre-2005 Voyager episode",
+        "Pre-2005 Friends episode",
+        "Pre-2005 Buffy episode",
+        "Pre-2005 Simpsons episode",
+        "User-confirmed Buffy: Once More, with Feeling musical excerpt"
+      ],
+      "negative_examples": [
+        "A new Simpsons episode",
+        "A modern retro-styled video"
+      ]
+    }
+  ],
+  "genres": {
+    "status": "approved_tv_vocabulary",
+    "allowed": [
+      "Animation",
+      "Comedy",
+      "Sketch Comedy",
+      "Documentary",
+      "Education",
+      "Science",
+      "Technology",
+      "History",
+      "Nature",
+      "Drama",
+      "Sci-Fi",
+      "Fantasy",
+      "Horror",
+      "Music",
+      "Gaming",
+      "Entertainment",
+      "News & Current Affairs",
+      "Sport",
+      "Lifestyle",
+      "Experimental"
+    ],
+    "definitions": {
+      "Animation": "Animated medium, including anime, stop motion and 3D animation.",
+      "Comedy": "Content primarily intended to be funny; can accompany more specific genres.",
+      "Sketch Comedy": "Performed skits and comedy sketches, including SNL, MADtv and WKUK.",
+      "Documentary": "Nonfiction documentary presentation of real subjects, people or events.",
+      "Education": "Explanations, demonstrations or analysis intended to teach or inform, even if silly.",
+      "Science": "Scientific concepts, research and explanations, including physics.",
+      "Technology": "Computing, engineering, technical systems and technology.",
+      "History": "Historical topics and explanations.",
+      "Nature": "Wildlife, natural history and the natural world.",
+      "Drama": "Scripted dramatic fiction, including drama series and films.",
+      "Sci-Fi": "Science-fiction narratives, settings or substantive fictional themes.",
+      "Fantasy": "Fantasy narratives, magical settings or mythic fictional themes.",
+      "Horror": "Content primarily built around fear, dread, the uncanny or horror storytelling.",
+      "Music": "Music is a central subject or experience; music background alone is insufficient.",
+      "Gaming": "Games, gameplay, game culture, machinima and substantive game-related content.",
+      "Entertainment": "Entertainment that does not fit a more specific genre; use sparingly.",
+      "News & Current Affairs": "News reporting, current-affairs discussion and analysis.",
+      "Sport": "Sport, sporting performance and sport analysis.",
+      "Lifestyle": "Daily life, crafts, style, cooking, home and practical lifestyle content.",
+      "Experimental": "Experimental audiovisual work or unconventional artistic form."
+    },
+    "max_per_video": 4
+  },
+  "tags": {
+    "guidance": "Specific subjects, franchises, aesthetics and subgenres; keep genres separate. Use only evidence-supported topics.",
+    "examples": [
+      "physics",
+      "LGBTQ+",
+      "drag",
+      "SNL",
+      "MADtv",
+      "WKUK",
+      "TF2",
+      "goblincore",
+      "surreal",
+      "tier list"
+    ],
+    "max_per_video": 8
+  },
+  "copy": {
+    "description": "One or two concise factual sentences. Identify supported studios/brands/fictional characters. Distinguish fan edits from official releases. No invented facts.",
+    "taglines": "Disabled: do not generate, scrape, replace or export taglines. Existing manually authored USB.tv values are outside this workflow."
+  },
+  "release_date_rule": "CRTV requires an evidenced original release year <=2004 for this specific content. Unknown year is null and means no CRTV assignment; explain uncertainty. Do not use an upload date, file timestamp, visual style or series launch year alone.",
+  "open_editorial_assumptions": [
+    "Very short surreal uses a provisional 60-second threshold for Goblin TV; TF2/goblincore do not have this length limit.",
+    "Long compilations receive channels only for their predominant or consistently present content; incidental one-off frames or lines do not qualify."
+  ],
+  "confirmed_examples": [
+    {
+      "fingerprint": "c1ae5a4ff2dfe4f4a00966dea780a309fabe542966f34bf22208d7cd6779c5ed",
+      "title": "Fan.tasia",
+      "channels": [
+        "Cartoons",
+        "Now That's What I Call Shit!"
+      ],
+      "description": "A music-led fan edit assembled from Disney animation clips.",
+      "tags": [
+        "Disney",
+        "fan edit"
+      ],
+      "note": "User confirmed that this music video uses Disney clips exclusively."
+    },
+    {
+      "fingerprint": "d39a785b960e62e3913b7656ee791f88e7897914097a0ef521f978504cc0260a",
+      "title": "Buffy - Once More, with Feeling musical excerpt",
+      "channels": [
+        "CRTV",
+        "TTTV",
+        "Now That's What I Call Shit!"
+      ],
+      "description": "A musical excerpt from Buffy the Vampire Slayer's Once More, with Feeling, featuring I've Got a Theory, Bunnies and If We're Together.",
+      "tags": [
+        "Buffy the Vampire Slayer",
+        "musical"
+      ],
+      "genres": [
+        "Music",
+        "Fantasy"
+      ],
+      "note": "User explicitly confirmed CRTV, TTTV and the music channel for this specific excerpt; this does not assume every Buffy-related fan edit was released before 2005."
+    }
+  ]
+}

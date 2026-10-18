@@ -34,9 +34,22 @@ function reconcileBroadcasts() {
 }
 const guidePreview = {channel:null, key:null, loaded:false, failed:false, blocked:false};
 const directFile = location.protocol === "file:";
+let writeToken = null, tokenRequest = null;
 async function apiFetch(path, options) {
   if (directFile) throw new Error("Open USB.tv using its launcher to load and save your library.");
-  try { return await fetch(path, options); }
+  try {
+    if (options?.method && options.method.toUpperCase() !== 'GET') {
+      if (!writeToken) {
+        tokenRequest ||= fetch('/api/write-token', {cache:'no-store'}).then(async response => {
+          if (!response.ok) throw new Error('Restart USB.tv with the updated app before saving.');
+          writeToken = (await response.json()).token;
+        }).finally(() => {tokenRequest=null;});
+        await tokenRequest;
+      }
+      options = {...options, headers:{...options.headers, 'X-USBtv-Write':writeToken}};
+    }
+    return await fetch(path, options);
+  }
   catch (error) {
     if (error instanceof TypeError) throw new Error("Cannot reach USB.tv’s local server. Restart the launcher and use the page it opens; keep its terminal running.");
     throw error;
@@ -76,11 +89,13 @@ function updateClock() {
 }
 
 async function loadCatalog() {
+  await loadVideoFolder();
   const [response, broadcasts] = await Promise.all([
     apiFetch("/api/catalog", { cache: "no-store" }), apiFetch('/api/broadcasts', {cache:'no-store'})
   ]);
   if (!response.ok) throw new Error("USB.tv could not read catalog.json");
   state.catalog = await response.json();
+  saveRevision = state.catalog.revision;
   if (broadcasts.ok) {
     const saved = await broadcasts.json();
     Object.assign(broadcastState,{channels:saved.channels,revision:saved.revision,ready:true});
@@ -96,15 +111,68 @@ async function loadCatalog() {
   if (!broadcasts.ok && broadcasts.status !== 404) throw new Error('Could not read saved channel ordering. Your library is still available; check broadcasts.json before reshuffling.');
 }
 
+async function loadVideoFolder() {
+  try {
+    const response = await apiFetch('/api/video-folder', {cache:'no-store'});
+    if (!response.ok) throw new Error('Restart USB.tv with the latest Windows build to choose a video folder.');
+    showVideoFolder(await response.json());
+  } catch (error) {
+    $('#video-folder-status').textContent = error.message;
+    $('#video-folder-save').disabled = true;
+    $('#video-folder-reset').disabled = true;
+  }
+}
+
+function showVideoFolder(folder) {
+  $('#video-folder-path').value = folder.path;
+  $('#video-folder-status').textContent = folder.available
+    ? 'Includes subfolders. External files stay in place unless external preparation is enabled in Settings → Imports. Labels and schedules stay with USB.tv.'
+    : 'Folder unavailable. Reconnect the drive or choose another folder. Your saved labels are retained.';
+}
+
+async function changeVideoFolder(path) {
+  $('#video-folder-save').disabled = true;
+  $('#video-folder-reset').disabled = true;
+  try {
+    const response = await apiFetch('/api/video-folder', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path})});
+    const folder = await response.json();
+    if (!response.ok) throw new Error(folder.error || 'Could not change video folder.');
+    showVideoFolder(folder);
+    $('#close-player').click();
+    const preview = $('#guide-preview-video');
+    preview.pause(); preview.removeAttribute('src'); preview.load();
+    guidePreview.key = null;
+    window.USBTvAudio?.setTrack(null,preview);
+    state.scanning = false;
+    await rescan();
+  } catch (error) {
+    $('#video-folder-status').textContent = error.message;
+  } finally {
+    $('#video-folder-save').disabled = false;
+    $('#video-folder-reset').disabled = false;
+  }
+}
+
+$('#video-folder-form').addEventListener('submit', event => {
+  event.preventDefault();
+  changeVideoFolder($('#video-folder-path').value);
+});
+$('#video-folder-reset').addEventListener('click', () => changeVideoFolder(''));
+
 // Serialize writes so rapid theme/metadata edits cannot overwrite each other out of order.
 let saveQueue = Promise.resolve();
+let saveRevision = null;
 function saveCatalog() {
   const snapshot = JSON.stringify(state.catalog);
   const task = saveQueue.catch(() => {}).then(async () => {
     $("#save-status").textContent = "SAVING…";
-    const response = await apiFetch("/api/catalog", {method:"POST", headers:{"Content-Type":"application/json"}, body:snapshot});
+    const outgoing = JSON.parse(snapshot);
+    outgoing.revision = saveRevision;
+    const response = await apiFetch("/api/catalog", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(outgoing)});
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Save failed");
+    if (!response.ok) { const error = new Error(data.error || "Save failed"); error.status = response.status; throw error; }
+    saveRevision = data.revision;
+    state.catalog.revision = data.revision;
     $("#save-status").textContent = "SAVED TO USB";
     return data;
   });
@@ -126,10 +194,12 @@ let cinemaHideTimer = null, cinemaNative = false;
 function fullscreenElement() { return document.fullscreenElement || document.webkitFullscreenElement; }
 function videoFillsScreen() { return $("#player-dialog").classList.contains("video-fills-screen"); }
 function updateFullscreenButtons() {
-  const active = Boolean(fullscreenElement()) || videoFillsScreen();
+  const active = Boolean(fullscreenElement());
   $("#fullscreen-toggle").setAttribute("aria-pressed",String(active));
   $("#fullscreen-toggle span").textContent = active ? "EXIT FULL" : "FULL SCREEN";
-  const label = active ? "Exit fullscreen" : state.catalog.settings?.fullscreen_mode === "app" ? "Fullscreen app" : "Fullscreen video";
+  const appMode = state.catalog.settings?.fullscreen_mode === 'app';
+  const label = appMode ? active ? 'Exit app fullscreen' : 'Fullscreen app'
+    : videoFillsScreen() ? 'Exit video fullscreen' : 'Fullscreen video';
   $("#video-fullscreen").title = label;
   $("#video-fullscreen").setAttribute("aria-label",label);
 }
@@ -137,14 +207,23 @@ function revealPlayerControls() {
   const dialog = $("#player-dialog");
   dialog.classList.add("controls-visible");
   clearTimeout(cinemaHideTimer);
-  if (videoFillsScreen()) cinemaHideTimer = setTimeout(()=>{
-    if (!$("#quick-label-panel").hidden || dialog.querySelector('.player-top:hover,.playback-controls:hover') || dialog.querySelector('input:focus')) return;
+  cinemaHideTimer = setTimeout(()=>{
+    if (!$("#quick-label-panel").hidden || state.playback?.loaded && $('#player').paused || dialog.querySelector('.player-top:hover,.playback-controls:hover') || dialog.querySelector('input:focus')) return;
     dialog.classList.remove("controls-visible");
   },2500);
 }
-async function exitAppFullscreen() {
+function hidePlayerControls() {
+  clearTimeout(cinemaHideTimer);
+  $('#player-dialog').classList.remove('controls-visible');
+}
+function exitVideoView() {
   $("#player-dialog").classList.remove("video-fills-screen","controls-visible");
-  clearTimeout(cinemaHideTimer); cinemaNative = false;
+  clearTimeout(cinemaHideTimer);
+  updateFullscreenButtons();
+}
+async function exitAppFullscreen() {
+  exitVideoView();
+  cinemaNative = false;
   if (fullscreenElement()) {
     try {
       if (document.exitFullscreen) await document.exitFullscreen();
@@ -153,13 +232,15 @@ async function exitAppFullscreen() {
   }
   updateFullscreenButtons();
 }
-async function toggleFullscreen() {
-  if (fullscreenElement() || videoFillsScreen()) {await exitAppFullscreen();return;}
-  const immersive = $("#player-dialog").open && state.catalog.settings?.fullscreen_mode !== "app";
+async function toggleFullscreen(target = document.documentElement) {
+  const immersive = target === $('#player-dialog') && $('#player-dialog').open && state.catalog.settings?.fullscreen_mode !== 'app';
+  if (immersive && videoFillsScreen()) { exitVideoView(); return; }
+  if (!immersive && fullscreenElement()) { await exitAppFullscreen(); return; }
   // Fill the viewport independently of browser fullscreen support. Always keep
   // the HTML player (and tuning overlays) rather than the native video surface.
   $("#player-dialog").classList.toggle("video-fills-screen",immersive);
   revealPlayerControls(); updateFullscreenButtons();
+  if (fullscreenElement()) return;
   try {
     const target = document.documentElement;
     if (target.requestFullscreen) await target.requestFullscreen({navigationUI:"hide"});
@@ -180,11 +261,19 @@ function fullscreenChanged() {
   updateFullscreenButtons();
 }
 for (const name of ["fullscreenchange","webkitfullscreenchange"]) document.addEventListener(name,fullscreenChanged);
-for (const name of ["pointermove","pointerdown","focusin"]) $("#player-dialog").addEventListener(name,revealPlayerControls);
+for (const name of ["pointermove","pointerdown"]) $("#player-dialog").addEventListener(name,revealPlayerControls);
 window.addEventListener("keydown",event=>{
   if (event.key === "Escape" && videoFillsScreen() && $("#quick-label-panel").hidden) {
-    event.preventDefault();event.stopImmediatePropagation();exitAppFullscreen();
-  } else if (videoFillsScreen()) revealPlayerControls();
+    event.preventDefault();event.stopImmediatePropagation();exitVideoView();
+  } else if ($('#player-dialog').open && event.key==='Tab') revealPlayerControls();
+},true);
+window.addEventListener('keydown',event=>{
+  if(!$('#player-dialog').open || event.repeat || event.altKey || event.ctrlKey || event.metaKey
+    || !$('#quick-label-panel').hidden || document.activeElement?.closest('input,textarea,select,button,[contenteditable="true"]'))return;
+  if(event.code==='Space'||event.key.toLowerCase()==='k') {
+    event.preventDefault();revealPlayerControls();
+    const player=$('#player');if(player.paused)player.play().catch(()=>{});else player.pause();
+  }
 },true);
 function updatePlaybackControls() {
   const player = $("#player");
@@ -192,11 +281,69 @@ function updatePlaybackControls() {
   $("#playback-mute").textContent = player.muted ? "UNMUTE" : "MUTE";
   $("#playback-mute").setAttribute("aria-label",player.muted ? "Unmute audio" : "Mute audio");
   $("#playback-volume").value = player.volume;
-  $("#playback-time").textContent = `${stamp(player.currentTime || 0)} / ${Number.isFinite(player.duration) ? stamp(player.duration) : "—"}`;
-  const preview = state.playback?.mode === "preview";
-  $("#preview-seek-label").hidden = !preview;
-  $("#preview-seek").max = Number.isFinite(player.duration) ? player.duration : 1;
-  $("#preview-seek").value = player.currentTime || 0;
+  const progress=playerProgress();
+  $("#playback-time").textContent = `${stamp(progress.value-progress.min)} / ${progress.max>progress.min ? stamp(progress.max-progress.min) : "—"}`;
+  const browsing = ['channel','replay','chaos'].includes(state.playback?.mode);
+  $('#programme-previous').hidden = !browsing;
+  $('#programme-restart').hidden = !browsing;
+  $('#programme-previous').disabled = state.playback?.mode==='chaos' && !(state.playback.trailIndex>0);
+  $('#programme-next').hidden = !['replay','chaos'].includes(state.playback?.mode);
+  $('#programme-next').title = state.playback?.mode==='chaos'?'Skip to the next Chaos video':'Watch the next programme or catch up to live';
+  $('#return-live').hidden = state.playback?.mode !== 'replay';
+  $('#admin-playback-controls').hidden = !adminPlaybackEnabled() || state.playback?.mode !== 'channel';
+  $("#preview-seek-label").hidden = false;
+  $("#preview-seek").min = progress.min;
+  $("#preview-seek").max = Math.max(progress.min+.1,progress.max);
+  $("#preview-seek").value = progress.value;
+  $("#preview-seek").disabled = !(progress.max>progress.min);
+  $("#preview-seek").title = ['channel','replay'].includes(state.playback?.mode)?'Drag to seek · forward seeking stops at live · Left/Right: 10 seconds':'Drag to seek · Left/Right: 10 seconds';
+}
+function playerProgress() {
+  const player=$('#player'), playback=state.playback;
+  const current=playback?.mode==='replay'?playback.current:playback?.mode==='channel'?playback.current || Schedule.locate(timeline(playback.channel)):null;
+  let min=0,max=Number.isFinite(player.duration)?player.duration:0;
+  if(current) {
+    min=current.segment.advert?current.segment.offset:current.block.video.source_offset||0;
+    max=current.segment.advert?min+current.segment.duration:min+Number(current.block.video.duration);
+  }
+  const position = current && playback.loaded === false ? current.position : player.currentTime || min;
+  return {min,max,value:Math.max(min,Math.min(max,position))};
+}
+function seekPlayback(position) {
+  const playback=state.playback,player=$('#player');
+  if (!Number.isFinite(position) || $('#quick-label-panel').dataset.saving==='true') return;
+  const progress=playerProgress();
+  if(['preview','chaos'].includes(playback?.mode)) {
+    if (progress.max>progress.min) player.currentTime=Math.max(progress.min,Math.min(position,progress.max-.05));
+    return;
+  }
+  if(!['channel','replay'].includes(playback?.mode))return;
+  const line=playback.mode==='replay'?playback.line:timeline(playback.channel);
+  const current=playback.current || Schedule.locate(line);
+  if(!current)return;
+  const target=Math.max(progress.min,Math.min(position,progress.max-.05));
+  const segment=current.segment.advert?current.segment:current.block.segments.find(s=>!s.advert && target>=s.offset && target<s.offset+s.duration);
+  if(!segment)return;
+  const cycleStart=current.start-current.block.start*1000;
+  const cursor=cycleStart+(segment.start+target-segment.offset)*1000;
+  if(cursor>=Date.now()) {
+    if (playback.mode==='replay') returnToLive();
+    else {showToast('You are already watching live.');updatePlaybackControls();}
+    return;
+  }
+  if (playback.mode==='channel') {
+    const autoplay=!player.paused;
+    clearChannelEntry();
+    state.playback={mode:'replay',channel:playback.channel,line,cursor,current:null,loaded:false};
+    loadChannelReplay(autoplay);revealPlayerControls();return;
+  }
+  playback.cursor=cursor;
+  if(segment===current.segment && playback.loaded !== false) player.currentTime=target;
+  else loadChannelReplay(playback.loaded === false ? playback.autoplay ?? !player.paused : !player.paused);
+}
+function seekRelative(seconds) {
+  seekPlayback(playerProgress().value + seconds);
+  revealPlayerControls();
 }
 $("#playback-toggle").addEventListener("click",()=>{
   const player = $("#player");
@@ -204,16 +351,60 @@ $("#playback-toggle").addEventListener("click",()=>{
 });
 $("#playback-mute").addEventListener("click",()=>{$("#player").muted=!$("#player").muted;});
 $("#playback-volume").addEventListener("input",event=>{const player=$("#player");player.volume=Number(event.target.value);player.muted=false;});
-$("#preview-seek").addEventListener("input",event=>{if(state.playback?.mode === "preview") $("#player").currentTime=Number(event.target.value);});
+$("#preview-seek").addEventListener("input",event=>seekPlayback(Number(event.target.value)));
 for (const name of ["play","pause","timeupdate","loadedmetadata","volumechange","emptied"]) $("#player").addEventListener(name,updatePlaybackControls);
 
+function adminPlaybackEnabled() {
+  return Boolean(state.catalog.settings?.advanced_mode && state.catalog.settings?.admin_playback);
+}
+let adminAdvancing = false;
+async function advanceChannel(action) {
+  const playback = state.playback;
+  if (!adminPlaybackEnabled() || adminAdvancing || playback?.mode !== 'channel'
+      || $('#quick-label-panel').dataset.saving === 'true') return;
+  adminAdvancing = true;
+  const buttons = [...$('#admin-playback-controls').querySelectorAll('button')];
+  buttons.forEach(button=>{button.disabled=true;});
+  try {
+    await broadcastQueue;
+    if (state.playback !== playback || !adminPlaybackEnabled()) return;
+    const plans = USBTvPlans.advance(state.catalog,broadcastState.channels,playback.channel,action);
+    // Apply locally only after the saved revision is accepted by the server.
+    await persistBroadcasts(plans);
+    broadcastState.channels = plans;
+    invalidateSchedule(); renderGuide(); renderChannels();
+    if (state.playback === playback) {
+      closeQuickLabels(); syncChannel(true); revealPlayerControls();
+    }
+    showToast(action === 'skip' ? 'Channel advanced to the next video' : 'Channel advanced 30 seconds');
+  } catch (error) { showToast(error.message); }
+  finally {adminAdvancing=false;buttons.forEach(button=>{button.disabled=false;});}
+}
+$('#admin-forward').addEventListener('click',()=>advanceChannel('forward'));
+$('#admin-skip').addEventListener('click',()=>advanceChannel('skip'));
+$('#admin-playback-toggle').addEventListener('change',async event=>{
+  state.catalog.settings.admin_playback = event.target.checked;
+  updatePlaybackControls();
+  try { await saveCatalog(); } catch (error) { showToast(error.message); }
+});
+
 function applyCrtSetting() {
-  const enabled = Boolean(state.catalog.settings?.crt);
+  const mode = state.catalog.settings?.crt_mode || (state.catalog.settings?.crt ? 'classic' : 'off');
+  const enabled = mode !== 'off';
   document.body.classList.toggle("crt-on", enabled);
+  document.body.classList.toggle("crt-realistic", mode === 'realistic');
   $("#crt-toggle").setAttribute("aria-pressed", String(enabled));
+  const label = {off:'CRT OFF', classic:'CRT CLASSIC', realistic:'CRT REALISTIC'}[mode];
+  $('#crt-toggle span').textContent = label;
+  $('#crt-toggle').title = `${label}. Click for ${{off:'classic',classic:'realistic',realistic:'off'}[mode]}.`;
+  $('#crt-toggle').setAttribute('aria-label', $('#crt-toggle').title);
+  window.USBTvCRT?.setEnabled(mode === 'realistic');
 }
 
 function applyThemeSetting() {
+  applyAudioSetting();
+  $('#auto-imports').checked = state.catalog.settings?.auto_imports !== false;
+  $('#prepare-external-imports').checked = state.catalog.settings?.prepare_external_imports === true;
   const themes = ["satellite", "teletext", "goblin"];
   const theme = themes.includes(state.catalog.settings?.theme) ? state.catalog.settings.theme : "satellite";
   document.body.dataset.theme = theme;
@@ -228,6 +419,65 @@ function applyThemeSetting() {
   document.querySelector('meta[name="theme-color"]').content = { satellite: "#09236c", teletext: "#080808", goblin: "#141a16" }[theme];
 }
 
+function applyAudioSetting() {
+  const enabled = state.catalog.settings?.volume_levelling !== false;
+  const profile = state.catalog.settings?.volume_profile === 'balanced' ? 'balanced' : 'standard';
+  for (const id of ['volume-levelling','advanced-volume-levelling','player-volume-levelling']) $('#'+id).checked = enabled;
+  for (const id of ['volume-profile','advanced-volume-profile','player-volume-profile']) $('#'+id).value = profile;
+  window.USBTvAudio?.setProfile(profile);
+  window.USBTvAudio?.setEnabled(enabled);
+  refreshPlaybackAudio();
+}
+function refreshPlaybackAudio() {
+  const playback = state.playback;
+  const item = ['preview','chaos'].includes(playback?.mode) ? state.catalog.videos.find(video=>video.id === playback.id)
+    : playback?.mode === 'channel' ? Schedule.locate(timeline(playback.channel))?.segment.video
+    : playback?.mode === 'replay' ? playback.current?.segment.video : null;
+  window.USBTvAudio?.setTrack(state.catalog.videos.find(video=>video.id === item?.id) || item || null);
+}
+function audioStatusMessage(audio, supported) {
+  if (!supported) return 'This browser cannot apply volume levelling; original audio is used.';
+  const progress = `${audio.checked} of ${audio.total} files checked. `;
+  if (!audio.enabled) return progress + 'Levelling is off. Saved measurements are retained.';
+  if (!audio.total) return 'No files to measure yet.';
+  const playback = audio.checked ? 'Saved levels are applied during playback where available. ' : 'Unchecked files play at their original levels. ';
+  return progress + playback + (!audio.available ? 'New measurements need FFmpeg.'
+    : audio.checked < audio.total ? 'Remaining files are measured in the background after scanning.' : 'All files have been checked.');
+}
+async function refreshAudioStatus() {
+  try {
+    const response = await apiFetch('/api/audio',{cache:'no-store'});
+    if (!response.ok) throw new Error('Restart USB.tv with the latest build to enable audio analysis.');
+    const audio = await response.json();
+    $('#audio-status').textContent = audioStatusMessage(audio, window.USBTvAudio?.supported());
+  } catch (error) { $('#audio-status').textContent = error.message; }
+}
+async function changeVolumeLevelling(event) {
+  const enabled = event.target.checked;
+  state.catalog.settings.volume_levelling = enabled;
+  applyAudioSetting();
+  window.USBTvAudio?.unlock();
+  try {
+    await saveCatalog();
+    await refreshAudioStatus();
+  } catch (error) { showToast(error.message); }
+}
+for (const id of ['volume-levelling','advanced-volume-levelling','player-volume-levelling']) $('#'+id).addEventListener('change',changeVolumeLevelling);
+async function changeVolumeProfile(event) {
+  state.catalog.settings.volume_profile = event.target.value === 'balanced' ? 'balanced' : 'standard';
+  applyAudioSetting(); window.USBTvAudio?.unlock();
+  try { await saveCatalog(); } catch (error) { showToast(error.message); }
+}
+for (const id of ['volume-profile','advanced-volume-profile','player-volume-profile']) $('#'+id).addEventListener('change',changeVolumeProfile);
+$('#auto-imports').addEventListener('change',async event=>{
+  state.catalog.settings.auto_imports = event.target.checked;
+  try { await saveCatalog(); } catch (error) { showToast(error.message); }
+});
+$('#prepare-external-imports').addEventListener('change',async event=>{
+  state.catalog.settings.prepare_external_imports = event.target.checked;
+  try { await saveCatalog(); } catch (error) { showToast(error.message); }
+});
+
 function displayTitle(video) { return video.title?.trim() || `Untitled ${video.type === "advert" ? "advert" : "programme"} #${video.id}`; }
 function activeMedia() { return state.catalog.videos.filter(video => !video.missing); }
 function channelNames() { return [...new Set((state.catalog.channels || []).map(channel => channel.name))].sort((a,b) => a.localeCompare(b)); }
@@ -237,7 +487,7 @@ function timeline(channel) {
   return state.timelines.get(channel);
 }
 function reviewReasons(video) {
-  return [!video.title?.trim() && "Needs title", !(video.duration > 0) && "Unreadable length / codec", video.type !== "advert" && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
+  return [!video.title?.trim() && "Needs title", !(video.duration > 0) && "Unreadable length / codec", video.type !== "advert" && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (video.type !== "advert" && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
 }
 function guideMinutes() {
   const value = Number(state.catalog.settings?.guide_minutes ?? 120);
@@ -245,24 +495,34 @@ function guideMinutes() {
 }
 // Absolute browsing time stays put as the clock advances; null follows live TV.
 const guideNavigation = {start:null, channel:null, time:null, kind:"programme"};
-function liveGuideStart() { return Math.floor(Date.now() / 1800000) * 1800000; }
+function liveGuideStart() { return Date.now(); }
+function renderGuideRuler(start, end, live) {
+  const ruler = $('#time-ruler');
+  ruler.innerHTML = Schedule.guideTicks(start, end, ruler.clientWidth, live).map(tick =>
+    `<span style="left:${(tick.time - start) / (end - start) * 100}%">${tick.now ? 'NOW' : formatTime(new Date(tick.time))}</span>`).join('');
+}
+function renderGuideWindowLabel(start, end, live) {
+  $('#guide-window-label').textContent = `${new Date(start).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'})} · ${formatTime(new Date(start))}–${formatTime(new Date(end))}${live ? ' · LIVE' : ' · BROWSING'}`;
+}
 function applyAdvancedMode() {
   const enabled = Boolean(state.catalog.settings?.advanced_mode);
   $("#advanced-toggle").setAttribute("aria-pressed", String(enabled));
   $("#advanced-toggle").title = enabled ? "Hide advanced controls" : "Show advanced controls";
   document.querySelectorAll("[data-advanced]").forEach(panel => { panel.hidden = !enabled; });
+  $('#admin-playback-toggle').checked = Boolean(state.catalog.settings?.admin_playback);
+  updatePlaybackControls();
 }
 function renderGuide() {
   applyAdvancedMode();
   const now = Date.now();
   const minutes = guideMinutes(), horizon = minutes * 60;
-  if (guideNavigation.start !== null && guideNavigation.start <= liveGuideStart()) guideNavigation.start = null;
-  const guideStart = guideNavigation.start ?? liveGuideStart();
-  const guideEnd = guideStart + horizon * 1000;
+  const window = Schedule.guideWindow(now, minutes, guideNavigation.start);
+  if (window.live) guideNavigation.start = null;
+  const guideStart = window.start, guideEnd = window.end;
   const gridHadFocus = $("#guide-rows").contains(document.activeElement);
   $("#guide-earlier").disabled = guideNavigation.start === null;
   $("#guide-now").setAttribute("aria-pressed", String(guideNavigation.start === null));
-  $("#guide-window-label").textContent = `${new Date(guideStart).toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"})} · ${formatTime(new Date(guideStart))}–${formatTime(new Date(guideEnd))}${guideNavigation.start === null ? " · LIVE" : " · BROWSING"}`;
+  renderGuideWindowLabel(guideStart, guideEnd, window.live);
   const hours = Math.floor(minutes / 60), remainder = minutes % 60;
   const spanLabel = [hours && `${hours} ${hours === 1 ? "hour" : "hours"}`, remainder && `${remainder} minutes`].filter(Boolean).join(" ");
   $("#guide-span").value = minutes;
@@ -272,12 +532,8 @@ function renderGuide() {
   const names = playableChannels();
   $("#guide-empty").classList.toggle("hidden", names.length > 0);
   $("#guide-rows").classList.toggle("hidden", names.length === 0);
-  const halfHours = minutes / 30;
-  const maxLabels = Math.max(2, Math.floor($("#time-ruler").clientWidth / 65));
-  const labelStep = Math.max(1, Math.ceil(halfHours / (maxLabels - 1)));
-  const ticks = Array.from({length:halfHours+1}, (_,n) => n).filter(n => n % labelStep === 0 || n === halfHours);
-  if (ticks.length > 2 && halfHours - ticks.at(-2) < labelStep) ticks.splice(-2,1);
-  $("#time-ruler").innerHTML = ticks.map(n => `<span style="left:${n / halfHours * 100}%">${formatTime(new Date(guideStart + n * 1800000))}</span>`).join("");
+  $('#guide-rows').dataset.live = String(window.live);
+  renderGuideRuler(guideStart, guideEnd, window.live);
   $("#guide-rows").innerHTML = names.map((channel, index) => {
     const slots = Schedule.guide(timeline(channel), guideStart, horizon);
     const color = palette[index % palette.length];
@@ -287,7 +543,8 @@ function renderGuide() {
       const width = (Math.min(slot.end, guideEnd) - Math.max(slot.start, guideStart)) / (horizon * 1000) * 100;
       return `<button class="programme ${slot.current ? "current" : "next"} ${width < 12 ? "compact" : ""}" style="width:${width}%;--progress:${Math.round(slot.progress*100)}%" data-channel="${esc(channel)}" data-start="${slot.start}" data-end="${slot.end}" data-guide-key="${esc(JSON.stringify([channel,slot.video.id,slot.start]))}" data-programme-title="${esc(displayTitle(slot.video))}" data-programme-time="${formatTime(new Date(slot.start))}–${formatTime(new Date(slot.end))}" title="${esc(displayTitle(slot.video))} · ${formatTime(new Date(slot.start))}–${formatTime(new Date(slot.end))} · Tune into ${esc(channel)}"><span class="programme-tag">${slot.current ? "ON NOW" : esc((slot.video.genres || []).join(" / ").toUpperCase())}</span><span class="programme-title"><span class="programme-title-text">${esc(displayTitle(slot.video))}</span></span><span class="programme-time">${formatTime(new Date(slot.start))} — ${formatTime(new Date(slot.end))}</span></button>`;
     }).join("");
-    return `<div class="guide-row"><button class="channel-card" data-channel="${esc(channel)}" aria-label="Tune into ${esc(channel)}"><span class="channel-number">${String(index + 1).padStart(3,"0")}</span><span class="channel-logo" style="color:${color};background:${color}18">${esc(channel.slice(0,1).toUpperCase())}</span><span class="channel-info"><span class="channel-name">${esc(channel)}</span><span class="channel-meta">TUNE IN LIVE</span></span></button><div class="schedule-track">${programmes}</div></div>`;
+    const onNow = window.live && slots[0] ? `ON NOW · ${displayTitle(slots[0].video)}` : 'TUNE IN LIVE';
+    return `<div class="guide-row"><button class="channel-card" data-channel="${esc(channel)}" aria-label="Tune into ${esc(channel)}"><span class="channel-number">${String(index + 1).padStart(3,"0")}</span><span class="channel-logo" style="color:${color};background:${color}18">${esc(channel.slice(0,1).toUpperCase())}</span><span class="channel-info"><span class="channel-name">${esc(channel)}</span><span class="channel-meta" title="${esc(onNow)}">${esc(onNow)}</span></span></button><div class="schedule-track">${programmes}</div></div>`;
   }).join("");
   $("#guide-rows").querySelectorAll("[data-channel]").forEach(button => {
     button.addEventListener("click", () => tuneChannel(button.dataset.channel));
@@ -302,6 +559,32 @@ function renderGuide() {
   }
   if (!names.includes(guidePreview.channel)) selectGuideChannel(names[0] || null);
   else { markGuideSelection(); syncGuidePreview(); }
+}
+function refreshGuideWindow() {
+  if (document.hidden || !$('#page-guide').classList.contains('active')) return;
+  const now = Date.now();
+  if (guideNavigation.start !== null) {
+    if (guideNavigation.start <= now) renderGuide();
+    return;
+  }
+  const end = now + guideMinutes() * 60000;
+  const tracks = [...$('#guide-rows').querySelectorAll('.schedule-track')];
+  // Rebuild only when a programme changes or another enters the far edge.
+  // Normal clock ticks preserve DOM nodes, keyboard focus and hover state.
+  if (tracks.some(track => !track.firstElementChild || Number(track.firstElementChild.dataset.end) <= now
+      || Number(track.lastElementChild.dataset.end) < end)) {
+    renderGuide();
+    return;
+  }
+  for (const track of tracks) for (const button of track.children) {
+    const start = Number(button.dataset.start), finish = Number(button.dataset.end);
+    const width = Math.max(0, Math.min(finish,end) - Math.max(start,now)) / (end-now) * 100;
+    button.style.width = `${width}%`;
+    button.classList.toggle('compact',width < 12);
+    if (button.classList.contains('current')) button.style.setProperty('--progress', `${Math.round((now-start)/(finish-start)*100)}%`);
+  }
+  renderGuideRuler(now,end,true);
+  renderGuideWindowLabel(now,end,true);
 }
 function guideRows() { return [...$("#guide-rows").querySelectorAll(".guide-row")]; }
 function programmeAt(row, time) {
@@ -325,8 +608,9 @@ function focusGuide(button, time = null) {
   return true;
 }
 function browseGuide(minutes) {
-  const next = Math.max(liveGuideStart(), (guideNavigation.start ?? liveGuideStart()) + minutes * 60000);
-  guideNavigation.start = next === liveGuideStart() ? null : next;
+  const live = liveGuideStart();
+  const next = Math.max(live, (guideNavigation.start ?? live) + minutes * 60000);
+  guideNavigation.start = next <= live ? null : next;
   guideNavigation.time = next;
   renderGuide();
 }
@@ -363,8 +647,9 @@ function guideInput(action) {
   const windowStart = guideNavigation.start ?? liveGuideStart();
   const windowEnd = windowStart + guideMinutes() * 60000;
   if (targetTime < windowStart || targetTime >= windowEnd) {
-    const next = Math.max(liveGuideStart(),Math.floor(targetTime / 1800000) * 1800000);
-    guideNavigation.start = next === liveGuideStart() ? null : next;
+    const live = liveGuideStart();
+    const next = Math.max(live,Math.floor(targetTime / 1800000) * 1800000);
+    guideNavigation.start = next <= live ? null : next;
     guideNavigation.time = targetTime;
     renderGuide();
   }
@@ -385,6 +670,17 @@ function selectGuideChannel(channel) {
   }
   markGuideSelection(); syncGuidePreview();
 }
+function updateGuideAudioControls() {
+  const muted = $("#guide-preview-video").muted;
+  const button = $("#preview-mute");
+  const label = muted ? "Unmute preview audio" : "Mute preview audio";
+  button.setAttribute("aria-label", label); button.title = label;
+  button.setAttribute("aria-pressed", String(muted));
+  button.querySelector(".preview-sound-waves").toggleAttribute("hidden", muted);
+  button.querySelector(".preview-sound-off").toggleAttribute("hidden", !muted);
+  $("#preview-badge").textContent = muted ? "LIVE · MUTED" : "LIVE";
+  $("#preview-play").textContent = muted ? "PLAY PREVIEW" : "PLAY WITH SOUND";
+}
 function syncGuidePreview() {
   const player = $("#guide-preview-video");
   const current = guidePreview.channel ? Schedule.locate(timeline(guidePreview.channel)) : null;
@@ -393,11 +689,13 @@ function syncGuidePreview() {
     player.onloadedmetadata = null;
     if (player.hasAttribute("src")) { player.pause(); player.removeAttribute("src"); player.load(); }
     guidePreview.key = null;
+    window.USBTvAudio?.setTrack(null,player);
     return;
   }
   const visible = $("#page-guide").classList.contains("active") && !document.hidden && !$("#player-dialog").open;
   if (!visible) { player.pause(); return; }
   const video = current.segment.video;
+  window.USBTvAudio?.setTrack(state.catalog.videos.find(item=>item.id===video.id) || video,player);
   $("#preview-channel").textContent = `${guidePreview.channel} · ${current.segment.advert ? "ADVERTISEMENT BREAK" : "ON AIR"}`;
   $("#preview-title").textContent = displayTitle(video);
   $("#preview-description").textContent = current.segment.advert ? `Advert break during ${displayTitle(current.block.video)}.` : video.description || "Now showing on your personal broadcast.";
@@ -411,12 +709,15 @@ function syncGuidePreview() {
       guidePreview.loaded = true;
       syncGuidePreview();
     };
-    player.muted = true;
     player.src = videoUrl(video.file); player.load();
   } else if (guidePreview.loaded && !guidePreview.failed) {
     if (player.paused || Math.abs(player.currentTime - current.position) > 3) seekToLive(current.position, player);
     if (player.paused && !guidePreview.blocked) {
-      player.play().catch(() => {
+      player.play().then(() => {
+        if (guidePreview.key === key && !player.muted && window.USBTvAudio?.suspended()) {
+          guidePreview.blocked = true; $("#preview-play").hidden = false;
+        }
+      }).catch(() => {
         if (guidePreview.key !== key || !$("#page-guide").classList.contains("active") || document.hidden || $("#player-dialog").open) return;
         guidePreview.blocked = true; $("#preview-play").hidden = false;
       });
@@ -425,23 +726,39 @@ function syncGuidePreview() {
 }
 const libraryView = {page:0}, bulkView = {page:0};
 const unassigned = video => video.type !== "advert" && !video.channels?.length;
-function searchMedia(video, text) {
-  const haystack = [video.id,video.file,video.title,video.description,...(video.tags||[]),...(video.genres||[]),...(video.channels||[])].join(" ").toLocaleLowerCase();
-  return text.trim().toLocaleLowerCase().split(/\s+/).every(word => haystack.includes(word));
-}
 function labelFilters(prefix) {
-  for (const [field,values] of [["channel",channelNames()],["genre",state.catalog.genres || []]]) {
+  const records=prefix==='bulk'?[...state.catalog.videos,...bulkRows]:state.catalog.videos;
+  const genres=[...new Set([...(state.catalog.genres||[]),...records.flatMap(v=>v.genres||[])])].sort((a,b)=>a.localeCompare(b));
+  for (const [field,values] of [["channel",channelNames()],["genre",genres]]) {
     const select = $("#"+prefix+"-"+field), previous = select.value;
     select.innerHTML = `<option value="">All ${field}s</option>` + values.map(value=>`<option value="${esc(value)}">${esc(value)}</option>`).join("");
     if (values.includes(previous)) select.value = previous;
   }
+  $('#known-tags').innerHTML=[...new Set(records.flatMap(v=>v.tags||[]))].sort((a,b)=>a.localeCompare(b)).map(tag=>`<option value="${esc(tag)}"></option>`).join('');
+}
+const mediaFilterFields=['search','channel','genre','tags-filter','tag-mode','min-minutes','max-minutes','sort','search-field','enabled-filter','type-filter','metadata-filter'];
+function mediaFilters(prefix) {
+  const value=key=>$('#'+prefix+'-'+key).value;
+  const min=value('min-minutes'),max=value('max-minutes');
+  $('#'+prefix+'-filter-note').textContent=min!==''&&max!==''&&Number(min)>Number(max)
+    ? 'Minimum length exceeds maximum length. Adjust the range to show matches.'
+    : (min!==''||max!==''?'Length limits include their endpoints; files with unknown lengths are excluded.':'');
+  return {search:value('search'),channel:value('channel'),genre:value('genre'),tags:value('tags-filter'),tagMode:value('tag-mode'),
+    minMinutes:min,maxMinutes:max,sort:value('sort'),searchField:value('search-field'),enabled:value('enabled-filter'),type:value('type-filter'),status:value('metadata-filter')};
+}
+function resetMediaFilters(prefix, render=true) {
+  for(const field of mediaFilterFields) {
+    const control=$('#'+prefix+'-'+field);
+    control.value=field==='sort'?'source':field==='search-field'?'all':field==='tag-mode'?'all':'';
+  }
+  if(prefix==='library') {$('#library-filter').value='all';libraryView.page=0;if(render)renderLibrary();}
+  else {bulkView.page=0;if(render)renderBulkRows();}
 }
 function filteredLibrary() {
   const filter = $("#library-filter").value;
-  return state.catalog.videos.filter(video => (filter === "missing" ? video.missing : !video.missing &&
-    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "unassigned" && unassigned(video) || video.type === filter)) &&
-    searchMedia(video,$("#library-search").value) && (!$("#library-channel").value || ($("#library-channel").value === CUSTOMS_CHANNEL ? unassigned(video) : video.channels?.includes($("#library-channel").value))) &&
-    (!$("#library-genre").value || video.genres?.includes($("#library-genre").value)));
+  const scope=state.catalog.videos.filter(video => filter === "missing" ? video.missing : !video.missing &&
+    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "unassigned" && unassigned(video) || video.type === filter));
+  return USBTvSuggestions.filterMedia(scope,mediaFilters('library'));
 }
 function pageItems(items, prefix, view) {
   const size = Number($("#"+prefix+"-page-size").value), pages = Math.max(1,Math.ceil(items.length/size));
@@ -454,16 +771,35 @@ function pageItems(items, prefix, view) {
 function renderLibrary() {
   labelFilters("library");
   const all = state.catalog.videos, matches = filteredLibrary();
+  if (!$('#library-filter-note').textContent.startsWith('Minimum')) $('#library-filter-note').textContent=`${matches.length} matching files · ${formatDuration(matches.reduce((sum,v)=>sum+(Number(v.duration)>0?Number(v.duration):0),0))} total airtime${$('#library-filter-note').textContent?' · '+$('#library-filter-note').textContent:''}`;
   const videos = pageItems(matches,"library",libraryView);
   $("#library-count").textContent = `${activeMedia().length} MEDIA FILES`;
   $("#review-count").textContent = `${activeMedia().filter(unassigned).length} unassigned · ${activeMedia().filter(video => reviewReasons(video).length).length} need review`;
   $("#library-empty").classList.toggle("hidden", all.length > 0);
   $(".table-wrap").classList.toggle("hidden", videos.length === 0);
   $("#read-page-lengths").disabled = !videos.some(video=>!video.missing && !(video.duration>0));
-  $("#library-body").innerHTML = videos.map(video => `<tr><td><span class="media-id">#${esc(video.id)}</span><div class="library-title">${esc(displayTitle(video))}</div><div class="bulk-file">${esc(video.file)}</div></td><td>${video.type === "advert" ? "Advert" : "Programme"}${video.enabled === false ? " · Disabled" : ""}</td><td class="duration-cell">${formatDuration(video.duration)}</td><td>${esc((video.genres || []).join(", ") || "—")}</td><td>${esc(video.channels?.join(", ") || (video.type === "advert" ? "All channels" : "No channels"))}<span class="review-label">${esc(reviewReasons(video).join(" · "))}</span></td><td><button class="media-edit" data-edit="${esc(video.id)}">EDIT</button></td></tr>`).join("");
+  $("#library-body").innerHTML = videos.map(video => `<tr><td><span class="media-id">#${esc(video.id)}</span><div class="library-title">${esc(displayTitle(video))}</div><div class="bulk-file">${esc(video.file)}</div><div class="library-tags">${esc((video.tags||[]).join(' · '))}</div></td><td>${video.type === "advert" ? "Advert" : "Programme"}${video.enabled === false ? " · Disabled" : ""}</td><td class="duration-cell">${formatDuration(video.duration)}</td><td>${esc((video.genres || []).join(", ") || "—")}</td><td>${esc(video.channels?.join(", ") || (video.type === "advert" ? "All channels" : "No channels"))}<span class="review-label">${esc(reviewReasons(video).join(" · "))}</span></td><td><button class="media-edit" data-edit="${esc(video.id)}">EDIT</button></td></tr>`).join("");
   $("#library-body").querySelectorAll("[data-edit]").forEach(button => button.addEventListener("click", () => openEditor(button.dataset.edit)));
 }
+let reshuffling = false;
+async function reshuffleChannels(name = null) {
+  if (reshuffling || !broadcastState.ready) return;
+  if (state.scanning) { showToast('Wait for the scan to finish before reshuffling.'); return; }
+  reshuffling = true; renderChannels();
+  try {
+    await saveQueue; await broadcastQueue;
+    const updated = name === null ? USBTvPlans.reshuffleAll(state.catalog,broadcastState.channels)
+      : USBTvPlans.reshuffle(state.catalog,broadcastState.channels,name);
+    await persistBroadcasts(updated);
+    broadcastState.channels = updated;
+    renderAll(); syncChannel(true); syncGuidePreview();
+    showToast(`${name === null ? 'All channels' : 'Channel'} reshuffled and restarted. New assignments are included.`);
+  } catch (error) { showToast(error.message); }
+  finally { reshuffling = false; renderChannels(); }
+}
+$('#shuffle-all-channels').addEventListener('click', () => reshuffleChannels());
 function renderChannels() {
+  $('#shuffle-all-channels').disabled = !broadcastState.ready || reshuffling || !state.catalog.channels.length;
   $("#channel-settings").innerHTML = channelNames().map(name => {
     const channel = state.catalog.channels.find(item => item.name === name);
     if (name === CUSTOMS_CHANNEL) return `<div class="channel-setting"><strong>${esc(name)}</strong><span class="channel-lineup-status">Automatic queue of unassigned programmes. Assigned videos leave after the current showing. No adverts.</span></div>`;
@@ -478,20 +814,8 @@ function renderChannels() {
     try { state.catalog = await saveCatalog(); renderAll(); } catch (_) {}
   }));
   $("#channel-settings").querySelectorAll('[data-reshuffle]').forEach(button => {
-    button.disabled = !broadcastState.ready;
-    button.addEventListener('click', async () => {
-    if (state.scanning) { showToast('Wait for the scan to finish before reshuffling.'); return; }
-    button.disabled = true;
-    try {
-      await saveQueue.catch(() => {}); await broadcastQueue.catch(() => {});
-      const updated = USBTvPlans.reshuffle(state.catalog,broadcastState.channels,button.dataset.reshuffle);
-      await persistBroadcasts(updated);
-      broadcastState.channels = updated;
-      renderAll(); syncChannel(true); syncGuidePreview();
-      showToast('Channel reshuffled and restarted. New assignments are included.');
-    } catch (error) { showToast(error.message); }
-    finally { button.disabled = false; }
-    });
+    button.disabled = !broadcastState.ready || reshuffling;
+    button.addEventListener('click', () => reshuffleChannels(button.dataset.reshuffle));
   });
 }
 function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); }
@@ -503,9 +827,8 @@ function bulkRowsForScope() {
 }
 function filteredBulkRows() {
   const actual = new Map(state.catalog.videos.map(video=>[video.id,video]));
-  return bulkRows.filter(row => searchMedia({...actual.get(row.id),...row},$("#bulk-search").value) &&
-    (!$("#bulk-channel").value || ($("#bulk-channel").value === CUSTOMS_CHANNEL ? unassigned({...actual.get(row.id),...row}) : row.channels.includes($("#bulk-channel").value))) &&
-    (!$("#bulk-genre").value || row.genres.includes($("#bulk-genre").value)));
+  const rowsById=new Map(bulkRows.map(row=>[row.id,row]));
+  return USBTvSuggestions.filterMedia(bulkRows.map(row=>({...actual.get(row.id),...row})),mediaFilters('bulk')).map(video=>rowsById.get(video.id));
 }
 function visibleBulkRows() {
   const size = Number($("#bulk-page-size").value);
@@ -513,7 +836,8 @@ function visibleBulkRows() {
 }
 function updateBulkSummary(message = "") {
   const selected = bulkRows.filter(row => row.selected).length;
-  $("#bulk-summary").textContent = `${bulkRows.length} files · ${selected} selected across all pages${message ? " · " + message : ""}`;
+  const matches=filteredBulkRows(),hiddenSelected=selected-matches.filter(row=>row.selected).length;
+  $("#bulk-summary").textContent = `${matches.length} matching / ${bulkRows.length} files · ${selected} selected across all pages${hiddenSelected?` · ${hiddenSelected} selected outside current filters`:''}${message ? " · " + message : ""}`;
   const visible = visibleBulkRows(), checked = visible.filter(row=>row.selected).length;
   $("#bulk-select-all").checked = Boolean(visible.length && checked === visible.length);
   $("#bulk-select-all").indeterminate = checked > 0 && checked < visible.length;
@@ -521,12 +845,14 @@ function updateBulkSummary(message = "") {
   $("#bulk-apply").disabled = selected === 0;
 }
 function renderBulkRows() {
+  labelFilters('bulk');
   const actual = new Map(state.catalog.videos.map(video=>[video.id,video]));
   const visible = pageItems(filteredBulkRows(),"bulk",bulkView);
   $("#bulk-body").innerHTML = visible.map(row => {
     const video = actual.get(row.id);
-    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><span class="settings-note">${esc(row.reasons.join(" · "))}</span></td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Description, tags &amp; taglines</summary>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${video.type === "advert" ? "All channels" : "Choose channels"}"></td></tr>`;
+    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><div class="settings-note">${formatDuration(video.duration)}${row.enabled===false||row.enabled===undefined&&video.enabled===false?" · Disabled":""}</div><div class="library-tags">${esc((row.tags||[]).join(" · "))}</div><span class="settings-note">${esc([...row.reasons,...reviewReasons(video).filter(reason=>reason.startsWith("Possibly multi-episode"))].join(" · "))}</span>${video.type !== "advert" && (video.duration > 3000 || video.episode_review === "multiple") ? `<button type="button" class="media-edit" data-review-episodes="${esc(video.id)}">REVIEW EPISODES</button>` : ""}</td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Type, description, tags &amp; taglines</summary><label>Type<select data-bulk-field="type" aria-label="Type for ${esc(row.id)}"><option value="programme" ${(row.type || video.type) === "programme" ? "selected" : ""}>Programme</option><option value="advert" ${(row.type || video.type) === "advert" ? "selected" : ""}>Advert</option></select></label>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${video.type === "advert" ? "All channels" : "Choose channels"}"></td></tr>`;
   }).join("");
+  $("#bulk-body").querySelectorAll("[data-review-episodes]").forEach(button=>button.addEventListener("click",()=>openEditor(button.dataset.reviewEpisodes)));
   $("#bulk-body").querySelectorAll("[data-bulk-select]").forEach(input => input.addEventListener("change", () => {
     bulkRows.find(row => row.id === input.closest("tr").dataset.id).selected = input.checked;
     updateBulkSummary();
@@ -534,6 +860,8 @@ function renderBulkRows() {
   $("#bulk-body").querySelectorAll("[data-bulk-field]").forEach(input => input.addEventListener("input", () => {
     const row = bulkRows.find(row => row.id === input.closest("tr").dataset.id);
     row[input.dataset.bulkField] = ["genres", "channels", "tags"].includes(input.dataset.bulkField) ? USBTvSuggestions.list(input.value) : input.value;
+    row.edited = true;
+    row.editedFields=[...new Set([...(row.editedFields||[]),input.dataset.bulkField])];
     row.selected = true;
     input.closest("tr").querySelector("[data-bulk-select]").checked = true;
     updateBulkSummary();
@@ -552,13 +880,17 @@ function generateBulk(preserve = false) {
 }
 function openBulkReview() {
   bulkRows = [];
+  $('#bulk-import-policy').value='preserve';updateImportPolicyNote();
   $("#bulk-rules").value = (state.catalog.label_rules || []).map(rule => `${rule.keyword} => ${(rule.genres || []).join(", ")} | ${(rule.channels || []).join(", ")}`).join("\n");
   $("#bulk-scope").value = "filtered";
   bulkView.page = 0;
+  resetMediaFilters('bulk',false);
+  $('#bulk-sort').value=$('#library-sort').value;
   $("#bulk-search").value = "";
   labelFilters("bulk");
   $("#bulk-channel").value = ""; $("#bulk-genre").value = "";
   $("#bulk-genres").value = ""; $("#bulk-channels").value = "";
+  for(const key of ['tags','type','enabled'])$('#bulk-'+key).value='';
   $("#known-genres").innerHTML = (state.catalog.genres || []).map(genre => `<option value="${esc(genre)}"></option>`).join("");
   $("#known-channels").innerHTML = assignableChannelNames().map(channel => `<option value="${esc(channel)}"></option>`).join("");
   generateBulk(); $("#bulk-dialog").showModal();
@@ -568,29 +900,47 @@ async function importBulkFile(event) {
   if (!file) return;
   try {
     if (file.size > 8_000_000) throw new Error("Choose a CSV/JSON file smaller than 8 MB.");
-    const {found,skipped} = USBTvSuggestions.importText(await file.text(),state.catalog);
+    const drafts=new Map(bulkRows.filter(row=>row.selected||row.edited).map(row=>[row.id,row]));
+    const importCatalog={...state.catalog,videos:state.catalog.videos.map(video=>({...video,...drafts.get(video.id)}))};
+    const protectedFields=Object.fromEntries([...drafts].map(([id,row])=>[id,row.editedFields||[]]));
+    const {found,skipped,protectedRows} = USBTvSuggestions.importText(await file.text(),importCatalog,{mode:$('#bulk-import-policy').value,protectedFields});
+    if($('#bulk-import-policy').value!=='replace') for(const row of found) {
+      const draft=drafts.get(row.id);
+      if(draft?.edited) {row.edited=true;row.editedFields=[...(draft.editedFields||[])];}
+    }
     const merged = new Map(bulkRows.map(row => [row.id,row]));
     found.forEach(row => merged.set(row.id,row));
     bulkRows = [...merged.values()];
     bulkView.page = 0;
+    resetMediaFilters('bulk',false);
     $("#bulk-search").value = ""; $("#bulk-channel").value = ""; $("#bulk-genre").value = "";
     renderBulkRows();
-    updateBulkSummary(`Loaded ${found.length} suggestions; skipped ${skipped.length}`);
+    const kept=protectedRows.filter(row=>!row.skipped).length, ignored=protectedRows.filter(row=>row.skipped).length;
+    updateBulkSummary(`Loaded ${found.length} suggestions${kept?` · kept existing fields on ${kept} videos`:''}${ignored?` · skipped ${ignored} labelled videos`:''} · rejected ${skipped.length} invalid rows`);
     $("#bulk-error").textContent = skipped.slice(0,5).join(". ");
   } catch (error) { $("#bulk-error").textContent = error.message; }
   finally { event.target.value = ""; }
 }
+function updateImportPolicyNote() {
+  const mode=$('#bulk-import-policy').value;
+  $('#bulk-import-policy-note').textContent=mode==='replace'
+    ? 'Replace mode: supplied fields can overwrite or clear existing values. Imported rows start unselected; review them before Save selected files.'
+    : mode==='skip-labelled'
+    ? 'Skip mode: ignore imported rows for videos with existing genres, channels, tags, descriptions or taglines. Other videos only fill empty fields; existing titles and types are kept.'
+    : 'Keep existing is the default: only fill empty fields. Existing titles, programme/advert types and label lists are kept, including any draft edits. Unrestricted adverts keep All channels. Scanned and manually entered values are both protected.';
+}
+$('#bulk-import-policy').addEventListener('change',updateImportPolicyNote);
 function assignBulk() {
   const selected = bulkRows.filter(row => row.selected);
   if (!selected.length) { $("#bulk-error").textContent = "Select rows first."; return; }
-  const replace = $("#bulk-mode").value === "replace";
-  const genres = USBTvSuggestions.list($("#bulk-genres").value), channels = USBTvSuggestions.list($("#bulk-channels").value);
+  const assignments={genres:$('#bulk-genres').value,channels:$('#bulk-channels').value,tags:$('#bulk-tags').value,type:$('#bulk-type').value,enabled:$('#bulk-enabled').value};
   selected.forEach(row => {
-    if (genres.length) row.genres = replace ? [...genres] : USBTvSuggestions.list([...row.genres,...genres]);
-    if (channels.length) row.channels = replace ? [...channels] : USBTvSuggestions.list([...row.channels,...channels]);
+    Object.assign(row,USBTvSuggestions.assignLabels(row,assignments,$('#bulk-mode').value));
+    row.editedFields=[...new Set([...(row.editedFields||[]),...Object.keys(assignments).filter(key=>assignments[key].trim())])];
     row.reasons = ["Manual bulk assignment"];
+    row.edited = true;
   });
-  $("#bulk-genres").value = ""; $("#bulk-channels").value = "";
+  for(const key of ['genres','channels','tags','type','enabled'])$('#bulk-'+key).value='';
   $("#bulk-error").textContent = ""; renderBulkRows();
 }
 async function applyBulk(rulesOnly = false) {
@@ -599,7 +949,7 @@ async function applyBulk(rulesOnly = false) {
   catch (error) { $("#bulk-error").textContent = error.message; return; }
   const selected = rulesOnly ? [] : bulkRows.filter(row => row.selected);
   if (!rulesOnly && !selected.length) { $("#bulk-error").textContent = "Select at least one row to save assignments."; return; }
-  if (!rulesOnly && ($("#bulk-genres").value.trim() || $("#bulk-channels").value.trim())) assignBulk();
+  if (!rulesOnly && ['genres','channels','tags','type','enabled'].some(key=>$('#bulk-'+key).value.trim())) assignBulk();
   const before = structuredClone(state.catalog);
   const controls = [...$("#bulk-dialog").querySelectorAll("button,input,textarea,select")];
   const disabled = controls.map(control => control.disabled);
@@ -610,7 +960,7 @@ async function applyBulk(rulesOnly = false) {
     selected.forEach(row => {
       const video = state.catalog.videos.find(video => video.id === row.id);
       video.title = row.title.trim(); video.genres = row.genres; video.channels = row.channels;
-      for (const field of ["description", "tags", "tagline", "tagline_goblin"]) if (row[field] !== undefined) video[field] = row[field];
+      for (const field of ["type", "enabled", "description", "tags", "tagline", "tagline_goblin"]) if (row[field] !== undefined) video[field] = row[field];
     });
     state.catalog = await saveCatalog();
     $("#bulk-dialog").close(); renderAll();
@@ -647,15 +997,112 @@ function renderSuggestions() {
   $("#break-suggestions").textContent = `${draft.break_suggestion_source || "interval"} suggestions: ${(draft.suggested_break_points || []).map(stamp).join(", ") || "None"}.`;
   $("#use-suggestions").disabled = !draft.suggested_break_points?.length;
 }
-function openEditor(id) {
-  const video = state.catalog.videos.find(item => item.id === id);
+function episodeTimestamp(value) {
+  const parts = String(value).trim().split(":");
+  if (!parts.length || parts.length > 3 || parts.some(part => !/^\d+(\.\d+)?$/.test(part)) ||
+      parts.length > 1 && Number(parts.at(-1)) >= 60 || parts.length === 3 && Number(parts[1]) >= 60)
+    throw new Error("Use episode timestamps such as 0:00, 22:30 or 1:05:00.");
+  return parts.reduce((total, part) => total * 60 + Number(part), 0);
+}
+function markerStamp(seconds) {
+  const milliseconds = Math.round(seconds * 1000);
+  const minutes = Math.floor(milliseconds / 60000), remainder = (milliseconds % 60000) / 1000;
+  return `${minutes}:${remainder < 10 ? "0" : ""}${remainder}`;
+}
+function readEpisodeRows() {
+  let previous = 0;
+  const episodes = [...$("#episode-rows").children].map(row => {
+    const title = row.querySelector('[data-episode="title"]').value.trim();
+    const start = episodeTimestamp(row.querySelector('[data-episode="start"]').value);
+    let end = episodeTimestamp(row.querySelector('[data-episode="end"]').value);
+    if (Math.abs(end - state.editing.duration) <= .001) end = state.editing.duration;
+    if (!title || !(start >= previous && start < end && end <= state.editing.duration))
+      throw new Error("Give every episode a title and ordered, non-overlapping boundaries within the video.");
+    previous = end;
+    return {title,start,end};
+  });
+  if (episodes.length > 200) throw new Error("Use up to 200 episodes.");
+  return episodes;
+}
+function renderEpisodeRows(episodes) {
+  $("#episode-rows").innerHTML = episodes.map((episode,index) => `<div class="episode-row"><label>Episode ${index+1}<input data-episode="title" maxlength="300" value="${esc(episode.title)}"></label><label>Start<input data-episode="start" value="${markerStamp(episode.start)}"></label><label>End<input data-episode="end" value="${markerStamp(episode.end)}"></label><div class="editor-actions"><button type="button" data-episode-preview="start">PREVIEW START</button><button type="button" data-episode-preview="end">PREVIEW END</button><button type="button" data-episode-remove>REMOVE</button></div></div>`).join("");
+}
+function updateEpisodeEditor() {
+  const programme = $("#edit-type").value !== "advert";
+  $("#episode-review-panel").hidden = !programme;
+  $("#episode-markers").hidden = $("#edit-episode-review").value !== "multiple";
+}
+$("#edit-episode-review").addEventListener("change", updateEpisodeEditor);
+$("#edit-type").addEventListener("change", updateEpisodeEditor);
+$("#divide-episodes").addEventListener("click", () => {
+  const count = Number($("#episode-count").value), duration = Number(state.editing.duration);
+  if (!Number.isInteger(count) || count < 2 || count > 200 || !(duration > 0)) {
+    $("#editor-error").textContent = "Choose 2–200 episodes and a video with a known length."; return;
+  }
+  renderEpisodeRows(Array.from({length:count},(_,index) => ({title:`${$("#edit-title").value || displayTitle(state.editing)} — Episode ${index+1}`,
+    start:Math.floor(index * duration / count),end:index === count-1 ? duration : Math.floor((index+1) * duration / count)})));
+  $("#editor-error").textContent = "Suggested equal divisions — review the boundaries before saving.";
+});
+$("#add-episode").addEventListener("click", () => {
+  try {
+    const episodes = readEpisodeRows(), start = episodes.at(-1)?.end || 0;
+    if (episodes.length >= 200 || start >= state.editing.duration) throw new Error("Make room before the end of the video to add an episode.");
+    episodes.push({title:`Episode ${episodes.length+1}`,start,end:state.editing.duration}); renderEpisodeRows(episodes);
+  } catch (error) { $("#editor-error").textContent = error.message; }
+});
+$("#episode-rows").addEventListener("click", event => {
+  const row = event.target.closest(".episode-row");
+  if (!row) return;
+  if (event.target.closest("[data-episode-remove]")) { row.remove(); return; }
+  const button = event.target.closest("[data-episode-preview]");
+  if (!button) return;
+  try {
+    let position = episodeTimestamp(row.querySelector(`[data-episode="${button.dataset.episodePreview}"]`).value);
+    if (button.dataset.episodePreview === "end") position = Math.max(0,position-5);
+    if (!(position >= 0 && position < state.editing.duration)) throw new Error("Preview time must be within the video.");
+    previewVideo(state.editing.id,position);
+  } catch (error) { $("#editor-error").textContent = error.message; }
+});
+function rememberEditDraft(video) {
+  try { sessionStorage.setItem('usbtv-edit-draft',JSON.stringify(video)); $('#recover-edit-draft').hidden = false; return true; }
+  catch (_) { return false; }
+}
+function clearEditDraft(id) {
+  try {
+    if (JSON.parse(sessionStorage.getItem('usbtv-edit-draft'))?.id === id) sessionStorage.removeItem('usbtv-edit-draft');
+    $('#recover-edit-draft').hidden = !sessionStorage.getItem('usbtv-edit-draft');
+  } catch (_) {}
+}
+$('#recover-edit-draft').addEventListener('click', () => {
+  try {
+    const draft = JSON.parse(sessionStorage.getItem('usbtv-edit-draft'));
+    const current = state.catalog.videos.find(video => video.id === draft?.id);
+    if (!current || current.missing || current.fingerprint !== draft.fingerprint || current.duration !== draft.duration) {
+      showToast('The draft’s file has changed or is unavailable. The draft cannot safely be restored.'); return;
+    }
+    openEditor(current.id,draft);
+    $('#editor-error').textContent = 'Recovered unsaved draft. Review it against the refreshed library before saving.';
+  } catch (_) { showToast('No saved edit draft is available in this tab.'); }
+});
+try { $('#recover-edit-draft').hidden = !sessionStorage.getItem('usbtv-edit-draft'); } catch (_) {}
+function openEditor(id, draft = null) {
+  let video = state.catalog.videos.find(item => item.id === id);
   if (!video) return;
+  if (draft) {
+    video = {...video};
+    for (const key of ['title','type','genres','channels','tags','enabled','description','tagline','tagline_goblin','break_points','breaks_approved','episode_review','episodes']) video[key] = structuredClone(draft[key]);
+  }
   state.editing = structuredClone(video);
   $("#editor-heading").textContent = `Edit media #${video.id}`;
   $("#editor-file").textContent = video.file;
   $("#edit-title").value = video.title || "";
   $("#new-genre").value = "";
   $("#edit-type").value = video.type;
+  $("#edit-episode-review").value = video.episode_review || "unchecked";
+  $("#episode-review-panel").open = video.type !== "advert" && (video.duration > 3000 || video.episode_review === "multiple");
+  $("#episode-review-hint").textContent = video.duration > 3000 && !["single","multiple"].includes(video.episode_review) ? "· Possibly multi-episode" : "";
+  $("#episode-count").value = Math.max(2,video.episodes?.length || 2);
+  renderEpisodeRows(video.episodes || []); updateEpisodeEditor();
   $("#edit-tags").value = (video.tags || []).join(", ");
   $("#edit-enabled").checked = video.enabled !== false;
   $("#edit-breaks").value = (video.break_points || []).map(stamp).join(", ");
@@ -681,6 +1128,9 @@ async function saveEditor(event) {
     if (pendingGenre && !draft.genres.includes(pendingGenre)) draft.genres.push(pendingGenre);
     draft.title = $("#edit-title").value.trim();
     draft.type = $("#edit-type").value;
+    draft.episode_review = $("#edit-episode-review").value;
+    draft.episodes = draft.episode_review === "multiple" ? readEpisodeRows() : draft.episodes || [];
+    if (draft.episode_review === "multiple" && draft.episodes.length < 2) throw new Error("Add at least two episodes, or choose Single programme.");
     draft.tags = [...new Set($("#edit-tags").value.split(",").map(value => value.trim()).filter(Boolean))];
     draft.enabled = $("#edit-enabled").checked;
     draft.description = $("#edit-description").value.trim();
@@ -693,9 +1143,13 @@ async function saveEditor(event) {
     state.catalog.videos[index] = structuredClone(draft);
     $("#save-media").disabled = true;
     try { const saved = await saveCatalog(); state.catalog = saved; }
-    catch (error) { state.catalog.videos[index] = before; throw error; }
+    catch (error) {
+      if (error.status === 409 && rememberEditDraft(draft)) error.message += ' Your draft is kept in this tab. Refresh, then choose Recover edit draft in Library & labels.';
+      state.catalog.videos[index] = before; throw error;
+    }
+    clearEditDraft(draft.id);
     $("#editor-dialog").close();
-    renderAll(); showToast("Labels saved to USB");
+    renderAll(); if ($("#bulk-dialog").open) renderBulkRows(); showToast("Labels saved to USB");
   } catch (error) { $("#editor-error").textContent = error.message; }
   finally { $("#save-media").disabled = false; }
 }
@@ -705,9 +1159,12 @@ async function analyseBreaks() {
   $("#analyse-breaks").disabled = true;
   $("#editor-error").textContent = "Analysing the file locally. This can take several minutes…";
   try {
-    const response = await fetch("/api/analyse", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id})});
+    const response = await apiFetch("/api/analyse", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id})});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
+    if (saveRevision === data.base_revision) {
+      saveRevision = data.revision; state.catalog.revision = data.revision;
+    }
     const item = state.catalog.videos.find(video => video.id === id);
     item.suggested_break_points = data.points; item.break_suggestion_source = data.source;
     if (state.editing?.id === id) { state.editing.suggested_break_points = data.points; state.editing.break_suggestion_source = data.source; renderSuggestions(); $("#editor-error").textContent = "Analysis complete. Review suggestions before approving."; }
@@ -723,52 +1180,103 @@ function closeQuickLabels() {
 }
 function openQuickLabels() {
   const playback = state.playback;
-  // During adverts, edit the programme containing the break rather than the ad.
-  const id = playback?.mode === "channel" ? Schedule.locate(timeline(playback.channel))?.block.video.id : playback?.id;
+  // Use the loaded segment, even when paused across a live schedule boundary.
+  const id = ['channel','replay'].includes(playback?.mode) ? playback.mediaId
+    || (playback.mode === 'channel' ? Schedule.locate(timeline(playback.channel))?.segment.video.id : playback.current?.segment.video.id)
+    : playback?.id;
   const video = state.catalog.videos.find(item=>item.id===id);
-  if (!video) {showToast("No programme is currently playing");return;}
+  if (!video) {showToast("No media is currently playing");return;}
   quickLabelId = id;
   $("#quick-label-heading").textContent = `Edit #${video.id} · ${displayTitle(video)}`;
   $("#quick-label-file").textContent = video.file;
   $("#quick-label-title").value = video.title || "";
+  $('#quick-label-type').value = video.type === 'advert' ? 'advert' : 'programme';
+  $('#quick-label-enabled').checked = video.enabled !== false;
+  $('#quick-label-all-channels').checked = video.type === 'advert' && !video.channels.length;
+  updateQuickLabelType();
   $("#quick-label-genres").value = (video.genres || []).join(", ");
   $("#quick-label-tags").value = (video.tags || []).join(", ");
-  $("#quick-label-channels").innerHTML = assignableChannelNames().map(name=>`<label class="check-label"><input type="checkbox" value="${esc(name)}" ${video.channels.includes(name) ? "checked" : ""}>${esc(name)}</label>`).join("");
+  $("#quick-label-channels").innerHTML = assignableChannelNames().map(name=>`<label class="check-label"><input type="checkbox" value="${esc(name)}" ${video.channels.includes(name) || $('#quick-label-all-channels').checked ? "checked" : ""}>${esc(name)}</label>`).join("");
+  $('#quick-label-channels').querySelectorAll('input').forEach(input => input.addEventListener('change', () => {
+    $('#quick-label-all-channels').checked = false;
+  }));
   $("#quick-label-error").textContent = "";
   $("#quick-label-panel").hidden = false;
   $("#quick-label-toggle").setAttribute("aria-expanded","true");
   $("#quick-label-title").focus();
 }
 $("#quick-label-toggle").addEventListener("click",()=>$("#quick-label-panel").hidden ? openQuickLabels() : closeQuickLabels());
+function updateQuickLabelType() {
+  const advert = $('#quick-label-type').value === 'advert';
+  $('#quick-label-global-option').hidden = !advert;
+  $('#quick-label-channel-legend').textContent = advert ? 'Allowed channels' : 'Show on channels';
+  $('#quick-label-channel-note').textContent = advert
+    ? 'Untick a channel to exclude this advert. All channels also includes future channels. To stop it everywhere, turn off Enabled for broadcast. Lineup changes normally wait for the next scheduled update; reshuffle a channel to apply them now.'
+    : 'Interdimensional Customs automatically shows unassigned programmes. Assigning a channel or changing to Advert removes this programme from Customs after the current showing finishes.';
+}
+$('#quick-label-type').addEventListener('change', () => {
+  // Converting an unrestricted advert must not assign a programme everywhere.
+  if ($('#quick-label-type').value !== 'advert' && $('#quick-label-all-channels').checked) {
+    $('#quick-label-all-channels').checked = false;
+    $('#quick-label-channels').querySelectorAll('input').forEach(input => {input.checked = false;});
+  }
+  updateQuickLabelType();
+});
+$('#quick-label-all-channels').addEventListener('change', event => {
+  if (event.target.checked) $('#quick-label-channels').querySelectorAll('input').forEach(input => {input.checked = true;});
+});
 for (const id of ["quick-label-close","quick-label-cancel"]) $("#"+id).addEventListener("click",closeQuickLabels);
 $("#quick-label-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const video = state.catalog.videos.find(item=>item.id===quickLabelId);
   if (!video || $("#quick-label-panel").dataset.saving === "true") return;
+  const type = $('#quick-label-type').value === 'advert' ? 'advert' : 'programme';
+  const enabled = $('#quick-label-enabled').checked;
+  const allChannels = type === 'advert' && $('#quick-label-all-channels').checked;
+  const channels = [...$("#quick-label-channels").querySelectorAll("input:checked")].map(input=>input.value);
+  if (type === 'advert' && enabled && !allChannels && !channels.length) {
+    $('#quick-label-error').textContent = 'Choose at least one allowed channel, choose All channels, or turn off Enabled for broadcast.';
+    return;
+  }
   const before = structuredClone(video);
   let metadataSaved = false;
   video.title = $("#quick-label-title").value.trim();
+  video.type = type; video.enabled = enabled;
   video.genres = USBTvSuggestions.list($("#quick-label-genres").value);
   video.tags = USBTvSuggestions.list($("#quick-label-tags").value);
-  video.channels = [...$("#quick-label-channels").querySelectorAll("input:checked")].map(input=>input.value);
-  const panel = $("#quick-label-panel"), controls = [...panel.querySelectorAll("button,input")];
+  video.channels = allChannels ? [] : channels;
+  const panel = $("#quick-label-panel"), controls = [...panel.querySelectorAll("button,input,select")];
   panel.dataset.saving = "true"; controls.forEach(control=>{control.disabled=true;});
   try {
-    state.catalog = await saveCatalog(); metadataSaved = true;
+    state.catalog = await saveCatalog(); metadataSaved = true; clearEditDraft(video.id);
     renderAll(); await broadcastQueue;
     panel.dataset.saving = "false"; closeQuickLabels();
-    showToast("Labels saved · current showing continues");
+    showToast(video.enabled === false ? 'Labels saved · disabled for broadcast' : 'Labels saved · lineup changes follow the channel schedule');
   } catch(error) {
     // A schedule write may fail after metadata was saved; retain those edits.
-    if (!metadataSaved) Object.assign(video,before);
+    if (!metadataSaved) {
+      if (error.status === 409 && rememberEditDraft(video)) error.message += ' Your draft is kept in this tab. Refresh, then choose Recover edit draft in Library & labels.';
+      Object.assign(video,before);
+    }
     $("#quick-label-error").textContent = error.message;
   } finally {panel.dataset.saving="false";controls.forEach(control=>{control.disabled=false;});}
 });
-function showPlayer() {
+$('#retry-media').addEventListener('click', () => {
+  const playback = state.playback;
+  if (playback?.mode !== 'channel' || !playback.failed) return;
+  playback.key = null; playback.failed = false;
+  syncChannel(true);
+});
+function showPlayer(reveal = true) {
+  $('#retry-media').hidden = true;
+  window.USBTvAudio?.unlock();
   $("#guide-preview-video").pause();
   if (!$("#player-dialog").open) $("#player-dialog").showModal();
+  $('#player').focus({preventScroll:true});
   if (fullscreenElement() && state.catalog.settings?.fullscreen_mode !== "app") $("#player-dialog").classList.add("video-fills-screen");
-  updatePlaybackControls(); revealPlayerControls(); updateFullscreenButtons();
+  updatePlaybackControls();
+  if(reveal)revealPlayerControls();else hidePlayerControls();
+  updateFullscreenButtons();
 }
 // Share numbering with the guide: only channels with playable schedules count.
 function playableChannels() { return channelNames().filter(channel => timeline(channel).duration > 0); }
@@ -803,6 +1311,7 @@ function commitChannelNumber() {
   else showChannelOsd(digits.padStart(3,"0"),"NO CHANNEL");
 }
 function enterChannelDigit(digit) {
+  hidePlayerControls();
   clearTimeout(channelEntry.timer);
   channelEntry.digits = (channelEntry.digits.length>=3 ? "" : channelEntry.digits) + digit;
   showChannelOsd(channelEntry.digits.padEnd(3,"_"),"TUNING…",false);
@@ -813,10 +1322,12 @@ function enterChannelDigit(digit) {
 window.addEventListener("keydown", event => {
   if (!$("#quick-label-panel").hidden) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
-  if (document.activeElement?.closest('input,textarea,select,[contenteditable="true"]') ||
+  const seeking = document.activeElement === $('#preview-seek') && ['ArrowLeft','ArrowRight'].includes(event.key);
+  if (!seeking && document.activeElement?.closest('input,textarea,select,[contenteditable="true"]') ||
       ["#editor-dialog","#bulk-dialog","#settings-dialog"].some(selector=>$(selector).open)) return;
-  const watching = $("#player-dialog").open && state.playback?.mode === "channel";
-  if (!watching && !(document.fullscreenElement || document.webkitFullscreenElement)) return;
+  const watching = $("#player-dialog").open && ['channel','replay'].includes(state.playback?.mode);
+  const playing = $('#player-dialog').open && ['channel','replay','preview','chaos'].includes(state.playback?.mode);
+  if (!playing && !(document.fullscreenElement || document.webkitFullscreenElement)) return;
   if (/^[0-9]$/.test(event.key) && (!$("#player-dialog").open || watching)) {
     event.preventDefault(); event.stopImmediatePropagation();
     if (!event.repeat) enterChannelDigit(event.key);
@@ -831,9 +1342,12 @@ window.addEventListener("keydown", event => {
         channelEntry.timer=setTimeout(commitChannelNumber,1200);
       } else clearChannelEntry();
     }
-  } else if (watching && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","PageUp","PageDown","MediaTrackNext","MediaTrackPrevious"].includes(event.key)) {
+  } else if (playing && ['ArrowLeft','ArrowRight'].includes(event.key)) {
     event.preventDefault(); event.stopImmediatePropagation();
-    if (!event.repeat) changeChannel(["ArrowUp","ArrowRight","PageUp","MediaTrackNext"].includes(event.key) ? 1 : -1);
+    seekRelative(event.key==='ArrowRight'?10:-10);
+  } else if (watching && ["ArrowUp","ArrowDown","PageUp","PageDown","MediaTrackNext","MediaTrackPrevious"].includes(event.key)) {
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!event.repeat) changeChannel(["ArrowUp","PageUp","MediaTrackNext"].includes(event.key) ? 1 : -1);
   }
 },true);
 $("#channel-down").addEventListener("click",()=>changeChannel(-1));
@@ -842,41 +1356,229 @@ document.addEventListener("fullscreenchange",()=>{if (!document.fullscreenElemen
 function tuneChannel(channel) {
   if ($("#quick-label-panel").dataset.saving === "true") return;
   closeQuickLabels();
+  stopChaosTransition();
   if (!timeline(channel).duration) return;
   clearChannelEntry();
   selectGuideChannel(channel);
   state.playback = {mode:"channel", channel, key:null, loaded:false, paused:false};
   $("#return-live").hidden = false;
   $("#channel-down").hidden = false; $("#channel-up").hidden = false;
-  showPlayer(); syncGuidePreview(); syncChannel(true);
+  showPlayer(false); syncGuidePreview(); syncChannel(true);
   showChannelOsd(String(playableChannels().indexOf(channel)+1).padStart(3,"0"),channel);
 }
-function previewVideo(id) {
+function previewVideo(id, position = 0) {
   if ($("#quick-label-panel").dataset.saving === "true") return;
   closeQuickLabels();
+  stopChaosTransition();
   clearChannelEntry();
   $("#channel-down").hidden = true; $("#channel-up").hidden = true;
   const video = state.catalog.videos.find(item => item.id === id);
   if (!video || video.missing) return;
-  state.playback = {mode:"preview", id};
+  state.playback = {mode:"preview", id, loaded:false};
   $("#return-live").hidden = true;
-  $("#player-status").textContent = "PREVIEW FROM START";
+  $("#player-status").textContent = position ? `PREVIEW AT ${stamp(position)}` : "PREVIEW FROM START";
   $("#player-title").textContent = displayTitle(video);
   $("#player-meta").textContent = `${(video.genres || []).join(" · ")} · ${formatDuration(video.duration)}`;
   const player = $("#player");
-  player.onloadedmetadata = null;
+  player.autoplay=true;
+  const playback=state.playback;
+  player.onloadedmetadata = () => {if(state.playback!==playback)return;seekToLive(position,player);playback.loaded=true;};
+  window.USBTvAudio?.setTrack(video);
   player.src = videoUrl(video.file);
   showPlayer();
-  player.play().catch(() => showToast("Press Play to start playback."));
+  player.play().catch(() => {revealPlayerControls();showToast("Press Play to start playback.");});
 }
+// Independent from the live schedule: whole files, one showing per shuffled cycle.
+function chaosRandomInt(limit) {
+  const range = 0x100000000, ceiling = range - range % limit;
+  const sample = new Uint32Array(1);
+  do { crypto.getRandomValues(sample); } while (sample[0] >= ceiling);
+  return sample[0] % limit;
+}
+function shuffleChaos(videos, previousId = null, randomInt = chaosRandomInt) {
+  const queue = videos.filter(video=>!video.missing && video.file).slice();
+  for (let i=queue.length-1;i>0;i--) {
+    const j=randomInt(i+1); [queue[i],queue[j]]=[queue[j],queue[i]];
+  }
+  if (queue.length>1 && queue[0].id===previousId) {
+    const j=1+randomInt(queue.length-1); [queue[0],queue[j]]=[queue[j],queue[0]];
+  }
+  return queue;
+}
+let chaosTransitionTimer = null, chaosSound = null;
+function stopChaosTransition() {
+  clearTimeout(chaosTransitionTimer);
+  $('#chaos-transition').hidden=true;
+  if (chaosSound) { chaosSound.close().catch(()=>{}); chaosSound=null; }
+}
+function chaosTransition() {
+  stopChaosTransition();
+  const overlay=$('#chaos-transition');
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  overlay.classList.toggle('chaos-reduced',reduced);
+  overlay.replaceChildren();
+  if (!reduced) for(let i=0;i<28;i++) {
+    const particle=document.createElement('i');
+    const angle=i*Math.PI*2/28;
+    particle.style.setProperty('--dx',`${Math.cos(angle)*(30+Math.random()*30)}vmax`);
+    particle.style.setProperty('--dy',`${Math.sin(angle)*(30+Math.random()*30)}vmax`);
+    particle.style.setProperty('--hue',String(i*360/28));
+    overlay.append(particle);
+  }
+  const title=document.createElement('strong');title.textContent='CHAOS';overlay.append(title);
+  overlay.hidden=false;
+  // Locally synthesised pitch dive and noise burst; no audio file or network needed.
+  const player=$('#player'), AudioContext=window.AudioContext||window.webkitAudioContext;
+  if (AudioContext && !player.muted && player.volume>0) try {
+    const context=chaosSound=new AudioContext(), now=context.currentTime;
+    const gain=context.createGain();gain.connect(context.destination);
+    gain.gain.setValueAtTime(.0001,now);gain.gain.exponentialRampToValueAtTime(.12*player.volume,now+.04);
+    gain.gain.exponentialRampToValueAtTime(.0001,now+1.05);
+    const oscillator=context.createOscillator();oscillator.type='sawtooth';
+    oscillator.frequency.setValueAtTime(1100,now);oscillator.frequency.exponentialRampToValueAtTime(45,now+.95);
+    const filter=context.createBiquadFilter();filter.type='lowpass';filter.frequency.value=2200;
+    oscillator.connect(filter);filter.connect(gain);oscillator.start(now);oscillator.stop(now+1.05);
+    const noise=context.createBuffer(1,Math.ceil(context.sampleRate*.8),context.sampleRate);
+    const samples=noise.getChannelData(0);for(let i=0;i<samples.length;i++)samples[i]=(Math.random()*2-1)*.25;
+    const burst=context.createBufferSource();burst.buffer=noise;burst.connect(filter);burst.start(now);
+    context.resume().catch(()=>{});
+  } catch (_) { /* Animation and playback still work without Web Audio. */ }
+  chaosTransitionTimer=setTimeout(stopChaosTransition,1300);
+}
+function startChaos() {
+  if (!state.catalog.settings?.advanced_mode || $('#quick-label-panel').dataset.saving==='true') return;
+  const queue=shuffleChaos(state.catalog.videos);
+  if (!queue.length) {showToast('Add some videos before unleashing chaos.');return;}
+  closeQuickLabels();clearChannelEntry();
+  state.playback={mode:'chaos',queue,index:-1,id:null,failures:0,trail:[],trailIndex:-1};
+  $('#channel-down').hidden=true;$('#channel-up').hidden=true;$('#return-live').hidden=true;
+  $('#quick-label-toggle').disabled=false;
+  showPlayer();
+  $('#player-dialog').classList.add('video-fills-screen');
+  revealPlayerControls();updateFullscreenButtons();
+  // Request during the click gesture, before waiting for video metadata.
+  if (!fullscreenElement()) {
+    const root=document.documentElement;
+    try {
+      const request=root.requestFullscreen?root.requestFullscreen({navigationUI:'hide'}):root.webkitRequestFullscreen?.();
+      request?.catch(()=>{});
+    } catch (_) {}
+  }
+  chaosTransition();advanceChaos();
+}
+function advanceChaos(failed = false) {
+  const playback=state.playback;
+  if (playback?.mode!=='chaos' || $('#quick-label-panel').dataset.saving==='true') return;
+  if (failed && ++playback.failures>=playback.queue.length) {
+    $('#player-meta').textContent='None of these files could be played. Close Chaos and check the files.';
+    showToast('Chaos stopped: no playable files.');return;
+  }
+  if (!failed) playback.failures=0;
+  closeQuickLabels();
+  let video;
+  playback.trail ||= [];playback.trailIndex ??= -1;
+  if (playback.trailIndex<playback.trail.length-1) video=playback.trail[++playback.trailIndex];
+  else {
+    if (++playback.index>=playback.queue.length) {
+      playback.queue=shuffleChaos(playback.queue,playback.id);playback.index=0;
+    }
+    video=playback.queue[playback.index];
+    playback.trail.push(video);playback.trailIndex=playback.trail.length-1;
+  }
+  showChaosVideo(playback,video);
+}
+function previousChaos() {
+  const playback=state.playback;
+  if (playback?.mode!=='chaos' || !(playback.trailIndex>0) || $('#quick-label-panel').dataset.saving==='true') return;
+  closeQuickLabels();playback.failures=0;
+  showChaosVideo(playback,playback.trail[--playback.trailIndex]);
+}
+function showChaosVideo(playback,video) {
+  playback.id=video.id;playback.loaded=false;
+  $('#player-status').textContent=`CHAOS · ${playback.queue.length} VIDEOS`;
+  $('#player-title').textContent=displayTitle(video);
+  $('#player-meta').textContent=`${formatDuration(video.duration)} · Everything shuffled · No scheduled breaks`;
+  const player=$('#player');
+  player.onloadedmetadata=()=>{
+    if(state.playback!==playback || playback.id!==video.id)return;
+    player.currentTime=0;playback.loaded=true;
+    player.play().catch(()=>{revealPlayerControls();showToast('Press Play to start Chaos.');});
+  };
+  window.USBTvAudio?.setTrack(video);
+  player.src=videoUrl(video.file);player.load();updatePlaybackControls();
+}
+$('#chaos-button').addEventListener('click',startChaos);
+function browseChannel(direction) {
+  const playback=state.playback;
+  if (!['channel','replay'].includes(playback?.mode) || $('#quick-label-panel').dataset.saving==='true') return;
+  const now=Date.now(), line=playback.mode==='replay'?playback.line:timeline(playback.channel);
+  const at=playback.mode==='replay'?playback.current?.start ?? playback.cursor:now;
+  const target=Schedule.browseProgramme(line,at,direction,now);
+  if (target===null) return;
+  if (target>=now) {returnToLive();return;}
+  closeQuickLabels();clearChannelEntry();stopChaosTransition();
+  state.playback={mode:'replay',channel:playback.channel,line,cursor:target,current:null,loaded:false};
+  loadChannelReplay();revealPlayerControls();
+}
+function returnToLive() {
+  const playback=state.playback;
+  if (['channel','replay'].includes(playback?.mode)) tuneChannel(playback.channel);
+}
+function loadChannelReplay(autoplay = true) {
+  const playback=state.playback;
+  if (playback?.mode!=='replay') return;
+  if (playback.cursor>=Date.now()) {returnToLive();return;}
+  const current=Schedule.locate(playback.line,playback.cursor);
+  if (!current) {returnToLive();return;}
+  playback.current=current;playback.mediaId=current.segment.video.id;playback.loaded=false;playback.autoplay=autoplay;
+  const player=$('#player'), behind=Math.max(1,Math.round((Date.now()-playback.cursor)/60000));
+  player.autoplay=autoplay;
+  $('#player-status').textContent=`REPLAY · ${playback.channel}`;
+  $('#player-title').textContent=current.segment.advert?`${playback.channel} · Advert break`:displayTitle(current.block.video);
+  $('#player-meta').textContent=`${behind} min behind live · ${current.segment.advert?displayTitle(current.segment.video):'Watching from the lineup'} · Return to live at any time`;
+  $('#quick-label-toggle').disabled=false;
+  window.USBTvAudio?.setTrack(state.catalog.videos.find(v=>v.id===current.segment.video.id)||current.segment.video);
+  player.onloadedmetadata=()=>{
+    if (state.playback!==playback || playback.current!==current) return;
+    seekToLive(current.position,player);playback.loaded=true;
+    if(autoplay)player.play().catch(()=>{revealPlayerControls();showToast('Press Play to watch the replay.');});
+    else {player.pause();revealPlayerControls();}
+  };
+  player.src=videoUrl(current.segment.video.file);player.load();updatePlaybackControls();
+}
+function advanceChannelReplay() {
+  const playback=state.playback;
+  if (playback?.mode!=='replay' || !playback.loaded) return;
+  playback.cursor=playback.current.segmentEnd+.5;
+  loadChannelReplay();
+}
+$('#programme-previous').addEventListener('click',()=>state.playback?.mode==='chaos'?previousChaos():browseChannel('previous'));
+$('#programme-restart').addEventListener('click',()=>{
+  if(state.playback?.mode==='chaos') {$('#player').currentTime=0;$('#player').play().catch(()=>{});}
+  else browseChannel('restart');
+});
+$('#programme-next').addEventListener('click',()=>state.playback?.mode==='chaos'?advanceChaos():browseChannel('next'));
+// Episode boundaries and internal breaks can occur before the source file ends.
+$('#player').addEventListener('timeupdate',()=>{
+  const playback=state.playback;
+  if (playback?.mode!=='replay' || !playback.loaded) return;
+  const segment=playback.current.segment;
+  if ($('#player').currentTime>=segment.offset+segment.duration-.03) advanceChannelReplay();
+});
 function syncChannel(force = false) {
   const playback = state.playback;
-  if (playback?.mode !== "channel" || playback.failed || playback.paused && !force) return;
+  if (playback?.mode !== "channel" || playback.paused && !force && !playback.failed) return;
   const current = Schedule.locate(timeline(playback.channel));
+  $('#retry-media').hidden = !playback.failed;
+  if (playback.failed && current?.key === playback.key) {
+    const next = Schedule.locate(timeline(playback.channel),current.segmentEnd + 1);
+    $('#player-meta').textContent = `This file could not be played. Retry or change channel.${next ? ' Next scheduled segment: ' + displayTitle(next.segment.video) + ' at ' + new Date(current.segmentEnd).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '.' : ''}`;
+    return;
+  }
   if (!current) {
     if (playback.channel === CUSTOMS_CHANNEL) {
       if (playback.key !== "customs-empty") {
-        playback.key = "customs-empty"; playback.loaded = false;
+        playback.key = "customs-empty"; playback.mediaId = null; playback.loaded = false;
         const player = $("#player"); player.onloadedmetadata = null; player.pause(); player.removeAttribute("src"); player.load();
         $("#player-status").textContent = "CUSTOMS CLEARED";
         $("#player-title").textContent = "No unassigned programmes remain";
@@ -894,16 +1596,20 @@ function syncChannel(force = false) {
   const returnsToProgramme = current.block.segments.some(segment => !segment.advert && segment.start > current.segment.start);
   const following = channelTimeline.blocks[(current.block.index + 1) % channelTimeline.blocks.length].video;
   $("#player-meta").textContent = current.segment.advert ? `${displayTitle(current.segment.video)} · ${returnsToProgramme ? "Back to " + displayTitle(current.block.video) : "Up next: " + displayTitle(following)}` : `${formatDuration(current.block.video.duration)} · Channel time · Pause resumes live`;
+  window.USBTvAudio?.setTrack(state.catalog.videos.find(video=>video.id === current.segment.video.id) || current.segment.video);
   if (playback.key !== current.key) {
-    playback.key = current.key; playback.loaded = false; playback.paused = false;
+    player.autoplay=true;
+    playback.failed = false;
+    $('#retry-media').hidden = true;
+    playback.key = current.key; playback.current = current; playback.mediaId = current.segment.video.id; playback.loaded = false; playback.paused = false;
     const key = current.key;
     player.onloadedmetadata = () => {
       if (state.playback !== playback || playback.key !== key) return;
       const latest = Schedule.locate(timeline(playback.channel));
       if (latest?.key !== key) { syncChannel(); return; }
-      playback.loaded = true;
+      playback.current = latest; playback.loaded = true;
       seekToLive(latest.position);
-      player.play().catch(() => { playback.paused = true; showToast("Press Play to join the channel."); });
+      player.play().catch(() => { playback.paused = true; revealPlayerControls();showToast("Press Play to join the channel."); });
     };
     player.src = videoUrl(current.segment.video.file);
     player.load();
@@ -934,17 +1640,17 @@ function readDuration(file) {
     media.src = videoUrl(file);
   });
 }
-let scanTimer = null, scanPolling = false, handledScan = null, pendingScanRefresh = false, scanQuiet = true;
+let scanTimer = null, scanPolling = false, handledScan = null, pendingScanRefresh = false, scanQuiet = true, audioRefreshKey = '';
 const editingLibrary = () => !$("#quick-label-panel").hidden || $("#editor-dialog").open || $("#bulk-dialog").open || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
 function displayScan(job) {
   state.scanning = job.status === "running";
   const button = $("#rescan");
   button.disabled = state.scanning;
-  button.innerHTML = state.scanning ? `↻ <span>SCANNING ${job.completed || 0}/${job.total || "…"}</span>` : '↻ <span>RESCAN VIDEOS</span>';
+  button.innerHTML = state.scanning ? `↻ <span>${job.stage === 'audio' ? 'AUDIO LEVELS' : job.stage === 'importing' ? 'PREPARING VIDEOS' : 'SCANNING'} ${job.completed || 0}/${job.total || "…"}</span>` : '↻ <span>RESCAN VIDEOS</span>';
   $("#scan-progress").hidden = job.status === "idle";
   $("#scan-meter").max = Math.max(1,job.total || 0);
   $("#scan-meter").value = job.completed || 0;
-  $("#scan-message").textContent = state.scanning ? `${job.stage === "discovering" ? "Finding videos…" : "Scanning"} · ${job.completed || 0}/${job.total || "…"} · ${job.current || ""}` : `${job.status === "complete" ? "Scan complete" : job.status === "interrupted" ? "Scan paused — rescan to continue" : "Scan failed"} · ${job.completed || 0}/${job.total || 0}${job.error ? " · " + job.error : ""}`;
+  $("#scan-message").textContent = state.scanning ? `${job.stage === "discovering" ? "Finding videos…" : job.stage === "audio" ? "Measuring audio levels" : job.stage === "importing" ? "Preparing new video" : "Scanning"} · ${job.completed || 0}/${job.total || "…"} · ${job.current || ""}` : `${job.status === "complete" ? "Scan complete" : job.status === "interrupted" ? "Scan paused — rescan to continue" : "Scan failed"} · ${job.completed || 0}/${job.total || 0}${job.error ? " · " + job.error : ""}${job.audio_note ? " · " + job.audio_note : ""}`;
   $("#scan-pause").hidden = !state.scanning;
   $("#scan-errors").hidden = !job.error_count;
   $("#scan-error-text").textContent = (job.errors || []).map(item => `${item.file}: ${item.error}`).join("\n");
@@ -957,6 +1663,10 @@ async function pollScan() {
     const job = await response.json();
     if (!response.ok) throw new Error(job.error || "Could not read scan progress");
     displayScan(job);
+    const checkpoint = `${job.id}:${job.stage}:${Math.floor((job.completed || 0) / 10)}`;
+    if (job.changed && state.scanning && checkpoint !== audioRefreshKey) {
+      audioRefreshKey = checkpoint; pendingScanRefresh = true;
+    }
     if (!state.scanning && job.id !== handledScan) {
       handledScan = job.id;
       pendingScanRefresh ||= Boolean(job.changed);
@@ -972,6 +1682,7 @@ async function pollScan() {
         pendingScanRefresh = false;
         if (JSON.stringify(data) !== JSON.stringify(state.catalog)) {
           state.catalog = data; applyThemeSetting(); applyCrtSetting(); renderAll();
+          saveRevision = data.revision;
         }
       }
     }
@@ -1020,6 +1731,13 @@ document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", (
 document.querySelectorAll("[data-goto]").forEach(button => button.addEventListener("click", () => setPage(button.dataset.goto)));
 for (const id of ["library-filter","library-channel","library-genre","library-page-size"]) $("#"+id).addEventListener("change", () => {libraryView.page=0;renderLibrary();});
 $("#library-search").addEventListener("input", () => {libraryView.page=0;renderLibrary();});
+for (const [prefix,view,render] of [['library',libraryView,renderLibrary],['bulk',bulkView,renderBulkRows]]) {
+  for(const key of mediaFilterFields.filter(key=>!['search','channel','genre'].includes(key))) {
+    const control=$('#'+prefix+'-'+key);
+    control.addEventListener(control.tagName==='INPUT'?'input':'change',()=>{view.page=0;render();});
+  }
+  $('#'+prefix+'-reset-filters').addEventListener('click',()=>resetMediaFilters(prefix));
+}
 for (const [prefix,view,render] of [["library",libraryView,renderLibrary],["bulk",bulkView,renderBulkRows]]) {
   $("#"+prefix+"-prev").addEventListener("click", () => {view.page--;render();});
   $("#"+prefix+"-next").addEventListener("click", () => {view.page++;render();});
@@ -1080,7 +1798,7 @@ $("#guide-span").addEventListener("change", async () => {
   try { await saveCatalog(); } catch (_) {}
 });
 $("#rescan").addEventListener("click", () => rescan());
-$("#settings-toggle").addEventListener("click", () => $("#settings-dialog").showModal());
+$("#settings-toggle").addEventListener("click", () => { $('#settings-dialog').showModal(); refreshAudioStatus(); });
 $("#close-settings").addEventListener("click", () => $("#settings-dialog").close());
 document.querySelectorAll('input[name="theme"]').forEach(input => input.addEventListener("change", async () => {
   state.catalog.settings.theme = input.value; applyThemeSetting();
@@ -1115,7 +1833,16 @@ $("#analyse-breaks").addEventListener("click", analyseBreaks);
 $("#preview-media").addEventListener("click", () => previewVideo(state.editing.id));
 $("#close-player").addEventListener("click", () => $("#player-dialog").close());
 $("#preview-watch").addEventListener("click", () => { if (guidePreview.channel) tuneChannel(guidePreview.channel); });
+$("#preview-mute").addEventListener("click", () => {
+  window.USBTvAudio?.unlock();
+  const player = $("#guide-preview-video");
+  player.muted = !player.muted;
+  guidePreview.blocked = false; $("#preview-play").hidden = true;
+  updateGuideAudioControls(); syncGuidePreview();
+});
+$("#guide-preview-video").addEventListener("volumechange", updateGuideAudioControls);
 $("#preview-play").addEventListener("click", () => {
+  window.USBTvAudio?.unlock();
   guidePreview.blocked = false; $("#preview-play").hidden = true; syncGuidePreview();
 });
 $("#guide-preview-video").addEventListener("error", () => {
@@ -1127,14 +1854,17 @@ $("#guide-preview-video").addEventListener("error", () => {
 document.addEventListener("visibilitychange", syncGuidePreview);
 $("#fullscreen-toggle").addEventListener("click", () => toggleFullscreen(document.documentElement));
 $("#video-fullscreen").addEventListener("click", () => toggleFullscreen($("#player-dialog")));
-$("#return-live").addEventListener("click", () => syncChannel(true));
+$("#return-live").addEventListener("click", returnToLive);
 document.querySelectorAll('input[name="fullscreen-mode"]').forEach(input=>input.addEventListener("change",async ()=>{
   state.catalog.settings.fullscreen_mode=input.value;
   updateFullscreenButtons();
   try {await saveCatalog();} catch (_) {}
 }));
 $("#crt-toggle").addEventListener("click", async () => {
-  state.catalog.settings.crt = !state.catalog.settings.crt; applyCrtSetting();
+  const current = state.catalog.settings.crt_mode || (state.catalog.settings.crt ? 'classic' : 'off');
+  state.catalog.settings.crt_mode = {off:'classic', classic:'realistic', realistic:'off'}[current];
+  state.catalog.settings.crt = state.catalog.settings.crt_mode !== 'off';
+  applyCrtSetting();
   try { await saveCatalog(); } catch (_) {}
 });
 document.addEventListener("keydown", event => {
@@ -1144,7 +1874,8 @@ document.addEventListener("keydown", event => {
   event.preventDefault(); toggleFullscreen($("#player-dialog").open ? $("#player-dialog") : document.documentElement);
 });
 $("#player-dialog").addEventListener("close", () => {
-  if (videoFillsScreen()) exitAppFullscreen();
+  stopChaosTransition();
+  exitVideoView();
   closeQuickLabels();
   clearChannelEntry();
   state.playback = null;
@@ -1152,20 +1883,37 @@ $("#player-dialog").addEventListener("close", () => {
 });
 $("#player").addEventListener("pause", () => {
   if (state.playback?.mode === "channel" && state.playback.loaded && !$("#player").ended) state.playback.paused = true;
+  if(state.playback?.loaded && !$('#player').ended)revealPlayerControls();
 });
 $("#player").addEventListener("play", () => {
   if (state.playback?.mode === "channel" && state.playback.paused) { state.playback.paused = false; syncChannel(true); }
+  if($('#player-dialog').classList.contains('controls-visible'))revealPlayerControls();
 });
-$("#player").addEventListener("ended", () => { if (state.playback?.mode === "channel") syncChannel(true); });
+$("#player").addEventListener("ended", () => { if (state.playback?.mode === "channel") syncChannel(true); else if(state.playback?.mode==='chaos') advanceChaos(); else if(state.playback?.mode==='replay') advanceChannelReplay(); });
 $("#player").addEventListener("error", () => {
   if (!state.playback) return;
-  if (state.playback.mode === "channel") state.playback.failed = true;
+  if (state.playback.mode === 'replay') {
+    state.playback.loaded=false;
+    $('#player-meta').textContent='This replay file cannot be played. Choose Next programme or Return to live.';
+    showToast('Unable to play this replay.');return;
+  }
+  if (state.playback.mode === 'chaos') {
+    const playback=state.playback, id=playback.id;
+    showToast('Chaos skipped a file this browser cannot play.');
+    setTimeout(()=>{if(state.playback===playback && playback.id===id)advanceChaos(true);},300);
+    return;
+  }
+  if (state.playback.mode === "channel") {
+    state.playback.failed = true;
+    $('#retry-media').hidden = false;
+    revealPlayerControls();
+  }
   $("#player-meta").textContent = "This browser cannot play this file. Check its codec or choose another channel.";
   showToast("The browser could not play this media file.");
 });
 updateFullscreenButtons(); applyThemeSetting(); updateClock();
 setInterval(updateClock,1000);
-setInterval(renderGuide,30000);
+setInterval(refreshGuideWindow,1000);
 setInterval(() => { syncChannel(); syncGuidePreview(); },500);
 // Discover new files without requiring a restart. Leave open editors undisturbed.
 setInterval(() => { if (!directFile && broadcastState.ready && !document.hidden) rescan(true); },120000);

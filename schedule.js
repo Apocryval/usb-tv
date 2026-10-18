@@ -14,18 +14,26 @@
     }
     return result;
   }
-  function buildCycle(catalog, channelName, seed = channelName, anchor = ANCHOR) {
+  function episodeProgrammes(video) {
+    if (video.episode_review !== "multiple" || !video.episodes?.length) return [video];
+    return video.episodes.map((episode, index) => ({...video, title:episode.title,
+      episode_index:index, source_offset:episode.start, duration:episode.end - episode.start,
+      break_points:(video.break_points || []).filter(point => point > episode.start && point < episode.end).map(point => point - episode.start)}));
+  }
+  function buildCycle(catalog, channelName, seed = channelName, anchor = ANCHOR, scheduleVersion = 2) {
     const channel = (catalog.channels || []).find((item) => item.name === channelName) || {};
     const interval = Number(channel.ad_interval ?? catalog.settings?.ad_interval ?? 900);
     const target = Number(channel.ad_length ?? catalog.settings?.ad_length ?? 90);
-    const programmes = shuffled(catalog.videos.filter((item) => validMedia(item) && item.type !== "advert" && item.channels.includes(channelName)), seed);
+    const programmes = shuffled(catalog.videos.filter((item) => validMedia(item) && item.type !== "advert" && item.channels.includes(channelName)), seed).flatMap(episodeProgrammes);
     const adverts = shuffled(catalog.videos.filter((item) => validMedia(item) && item.type === "advert" && (!item.channels.length || item.channels.includes(channelName))), seed + ":adverts");
     let adIndex = 0, sinceBreak = 0, cursor = 0, previousAd = null, firstAd = null;
     const blocks = [];
     const programmeSeconds = programmes.reduce((sum, video) => sum + Number(video.duration), 0);
     // Span multiple rotations so a short collection still accumulates time toward breaks.
     const minimumCycle = adverts.length && target > 0 ? Math.max(programmeSeconds, interval * 4) : programmeSeconds;
-    for (let index = 0; programmes.length && (index < programmes.length || cursor < minimumCycle || sinceBreak > 0 && adverts.length && target > 0 || adverts.length > 1 && target > 0 && firstAd === previousAd) && index < 10000; index++) {
+    for (let index = 0; programmes.length && (index < programmes.length || cursor < minimumCycle ||
+      (scheduleVersion < 2 ? sinceBreak > 0 && adverts.length && target > 0 : index % programmes.length !== 0) ||
+      adverts.length > 1 && target > 0 && firstAd === previousAd) && index < 10000; index++) {
       const video = programmes[index % programmes.length];
       const block = { video, index, start: cursor, segments: [] };
       function append(media, offset, duration, advert = false) {
@@ -59,7 +67,7 @@
       let offset = 0;
       for (const point of [...points, Number(video.duration)]) {
         const length = point - offset;
-        append(video, offset, length);
+        append(video, (video.source_offset || 0) + offset, length);
         sinceBreak += length;
         offset = point;
         if (sinceBreak >= interval) breakNow();
@@ -82,8 +90,9 @@
       const actual = new Map(catalog.videos.map(video => [video.id,video]));
       const videos = version.snapshot.videos.map(frozen => ({...actual.get(frozen.id), ...frozen,
         file:actual.get(frozen.id)?.file, title:actual.get(frozen.id)?.title,
+        episode_review:frozen.episode_review || "unchecked", episodes:frozen.episodes || [],
         genres:actual.get(frozen.id)?.genres || [], description:actual.get(frozen.id)?.description || ''}));
-      return buildCycle({videos, channels:[version.snapshot.channel], settings:{}}, channelName, version.seed, version.anchor);
+      return buildCycle({videos, channels:[version.snapshot.channel], settings:{}}, channelName, version.seed, version.anchor, version.schedule_version || 1);
     }
     const active = cycle(plan.active);
     return {...active, active, pending:plan.pending ? cycle(plan.pending) : null, transition:plan.pending?.anchor};
@@ -119,7 +128,36 @@
     }
     return result;
   }
-  const api = { build, buildCycle, locate, guide, shuffled, validMedia, ANCHOR };
+  // Live guides begin at the actual broadcast time, rather than retaining
+  // already-finished programmes until the next clock-aligned page boundary.
+  function guideWindow(now, minutes, browsingStart = null) {
+    const live = browsingStart === null || browsingStart <= now;
+    const start = live ? now : browsingStart;
+    return {start, end:start + minutes * 60000, live};
+  }
+  function guideTicks(start, end, width, live) {
+    const span = end - start;
+    const step = Math.max(1, Math.ceil(span / 1800000 / Math.max(1, Math.floor(width / 75)))) * 1800000;
+    const ticks = [{time:start, now:live}];
+    for (let time = Math.ceil(start / step) * step; time < end; time += step) {
+      // Leave room for the left-edge NOW/time label and the end label.
+      if ((time - start) / span * width >= 65 && (end - time) / span * width >= 55) ticks.push({time});
+    }
+    ticks.push({time:end});
+    return ticks;
+  }
+  function browseProgramme(timeline, at, direction, now = Date.now()) {
+    const current = locate(timeline,at);
+    if (!current) return null;
+    if (direction === 'previous') {
+      const previous = locate(timeline,current.start - .5);
+      return previous ? previous.start + .5 : null;
+    }
+    if (direction === 'restart') return Math.min(now,current.start + .5);
+    if (direction === 'next') return Math.min(now,current.end + .5);
+    return null;
+  }
+  const api = { build, buildCycle, locate, guide, guideWindow, guideTicks, shuffled, validMedia, episodeProgrammes, browseProgramme, ANCHOR };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.USBTvSchedule = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

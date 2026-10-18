@@ -4,20 +4,26 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 import argparse
+import errno
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import mimetypes
 import re
+import secrets
+import hmac
 import sys
 import threading
 import uuid
 import webbrowser
 import zipfile
-from catalogue import Catalogue
+from catalogue import Catalogue, CatalogueConflict
 from media import analyse_breaks
 from distribution import ASSETS
 from updater import install_update
 import broadcasts
 from session import LibrarySession
+from imports import RESERVED_FOLDERS
 
 APP_ROOT = Path(__file__).resolve().parent
 if getattr(sys, "frozen", False):
@@ -27,6 +33,34 @@ WEB_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT))
 LIBRARY = None
 SESSION = None
 SCANS = None
+ERROR_LOGGER = None
+WRITE_TOKEN = secrets.token_hex(32)
+
+
+def client_disconnected(error):
+    """Video seeks and channel changes routinely cancel in-flight HTTP responses."""
+    return isinstance(error, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)) or (
+        isinstance(error, OSError) and (error.errno in (errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED)
+                                      or getattr(error, "winerror", None) in (10053, 10054, 10058)))
+
+
+def configure_error_log(root):
+    global ERROR_LOGGER
+    logger = logging.getLogger("USB.tv.server")
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+    try:
+        handler = RotatingFileHandler(Path(root) / "server-errors.log", maxBytes=1024*1024,
+                                      backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+        ERROR_LOGGER = logger
+    except OSError as error:
+        ERROR_LOGGER = None
+        print(f"Could not create server diagnostic log: {error}", file=sys.stderr, flush=True)
 
 
 class ScanJobs:
@@ -85,17 +119,32 @@ class ScanJobs:
             with self.library.lock:
                 before = self.library.read()
             after = self.library.scan(progress=self.progress, cancelled=self.stop_event.is_set)
+            self.progress(changed=before != after)
+            scan_errors = list(self.state.get("errors", []))
+            def audio_progress(**values):
+                if "errors" in values:
+                    values["errors"] = scan_errors + values["errors"]
+                self.progress(**values)
+            after = self.library.analyse_audio(progress=audio_progress, cancelled=self.stop_event.is_set)
             with self.lock:
                 self.state.update(status="complete", stage="complete", current="", changed=before != after)
         except InterruptedError as error:
             with self.lock:
                 self.state.update(status="interrupted", error=str(error), changed=True)
         except Exception as error:
+            if ERROR_LOGGER:
+                ERROR_LOGGER.exception("Background scan failed")
             with self.lock:
                 self.state.update(status="failed", error=str(error), changed=True)
         finally:
             with self.lock:
-                self.persist()
+                try:
+                    self.persist()
+                except OSError as error:
+                    self.state.update(status="failed", error=f"Could not save scan status: {error}", changed=True)
+                    if ERROR_LOGGER:
+                        ERROR_LOGGER.exception("Could not save background scan status")
+                    print(self.state["error"], file=sys.stderr, flush=True)
 
     def close(self):
         self.stop_event.set()
@@ -111,10 +160,43 @@ class SessionServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         super().__init__(*args)
 
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(30)
+        return connection, address
+
+    def handle_error(self, request, client_address):
+        error = sys.exc_info()[1]
+        if client_disconnected(error):
+            return
+        if ERROR_LOGGER:
+            ERROR_LOGGER.error("Unhandled HTTP request error from %s", client_address, exc_info=True)
+        super().handle_error(request, client_address)
+
 
 class Handler(SimpleHTTPRequestHandler):
+    def trusted_request(self):
+        host = self.headers.get("Host", "")
+        allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        origin = self.headers.get("Origin")
+        return host in allowed and (origin is None or origin == f"http://{host}")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
+
+    def handle(self):
+        try:
+            super().handle()
+        except OSError as error:
+            if not client_disconnected(error):
+                raise
+
+    def finish(self):
+        try:
+            super().finish()
+        except OSError as error:
+            if not client_disconnected(error):
+                raise
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
@@ -133,8 +215,13 @@ class Handler(SimpleHTTPRequestHandler):
         relative = Path(unquote(route.lstrip("/")))
         if not relative.parts or relative.parts[0] not in ("Videos", "Adverts"):
             return self.send_error(404)
-        target = (LIBRARY.root / relative).resolve()
-        if not target.is_relative_to(LIBRARY.root / relative.parts[0]) or not target.is_file():
+        if any(part in RESERVED_FOLDERS for part in relative.parts):
+            return self.send_error(404)
+        try:
+            target = LIBRARY.media_path(relative)
+        except ValueError:
+            return self.send_error(404)
+        if not target.is_file():
             return self.send_error(404)
         try:
             with target.open("rb") as media:
@@ -178,12 +265,16 @@ class Handler(SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        except FileNotFoundError:
-            self.send_error(404)
+        except OSError as error:
+            if client_disconnected(error):
+                return
+            if isinstance(error, FileNotFoundError):
+                return self.send_error(404)
+            raise
 
     def do_HEAD(self):
+        if not self.trusted_request():
+            return self.send_error(403)
         route = urlparse(self.path).path
         if route.startswith(("/Videos/", "/Adverts/")):
             return self.media_response(route, head=True)
@@ -192,18 +283,24 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_HEAD()
 
     def do_GET(self):
+        if not self.trusted_request():
+            return self.send_error(403)
         if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
             return self.send_error(503, "USB.tv is restarting")
         route = urlparse(self.path).path
         try:
+            if route == "/api/write-token":
+                return self.send_json({"token": WRITE_TOKEN})
+            if route == "/api/video-folder":
+                return self.send_json(LIBRARY.folder_status())
+            if route == "/api/audio":
+                return self.send_json(LIBRARY.audio_status())
             if route == "/api/catalog":
                 with LIBRARY.lock:
                     return self.send_json(LIBRARY.read())
             if route == "/api/broadcasts":
                 with LIBRARY.lock:
                     return self.send_json(broadcasts.read(LIBRARY.root))
-            if route == "/api/rescan":
-                return self.send_json(LIBRARY.scan())
             if route == "/api/scan":
                 return self.send_json(SCANS.status())
             if route.startswith(("/Videos/", "/Adverts/")):
@@ -212,9 +309,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_error(404)
             return super().do_GET()
         except (OSError, ValueError) as error:
+            if client_disconnected(error):
+                return
+            if ERROR_LOGGER:
+                ERROR_LOGGER.exception("GET %s failed", route)
             return self.send_json({"error": str(error)}, 500)
 
     def do_POST(self):
+        if not self.trusted_request():
+            return self.send_error(403)
         route = urlparse(self.path).path
         if route == "/api/session/stop":
             if not SESSION or not SESSION.authorized(self.headers.get("X-USBtv-Session")):
@@ -227,8 +330,11 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
             return self.send_error(503, "USB.tv is restarting")
-        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan"):
+        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan", "/api/video-folder"):
             return self.send_error(404)
+        if (self.headers.get_content_type() != "application/json"
+                or not hmac.compare_digest(self.headers.get("X-USBtv-Write", "").encode(), WRITE_TOKEN.encode())):
+            return self.send_error(403)
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 8_000_000:
@@ -236,6 +342,10 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Expected an object")
+            if route == "/api/video-folder":
+                if SCANS and SCANS.thread and SCANS.thread.is_alive():
+                    raise ValueError("Wait for the scan to finish, or pause it before changing folders.")
+                return self.send_json(LIBRARY.set_video_folder(data.get("path", "")))
             if route == "/api/scan":
                 if data.get("action") == "pause":
                     SCANS.stop_event.set()
@@ -246,6 +356,8 @@ class Handler(SimpleHTTPRequestHandler):
                     updated = broadcasts.save(LIBRARY.root, data)
                     return self.send_json(updated or {"error":"Another window changed the schedule. Refresh before reshuffling."}, 200 if updated else 409)
             if route == "/api/catalog":
+                if "revision" not in data:
+                    raise CatalogueConflict("Refresh this page before saving with the updated server.")
                 return self.send_json(LIBRARY.save_edits(data))
             with LIBRARY.lock:
                 catalog = LIBRARY.read()
@@ -253,16 +365,23 @@ class Handler(SimpleHTTPRequestHandler):
                 if not item:
                     raise ValueError("Unknown video")
                 snapshot = dict(item)
-            points, source = analyse_breaks(LIBRARY.root / snapshot["file"], LIBRARY.root, snapshot["duration"])
+            points, source = analyse_breaks(LIBRARY.media_path(snapshot["file"]), LIBRARY.root, snapshot["duration"])
             with LIBRARY.lock:
                 catalog = LIBRARY.read()
                 item = next((item for item in catalog["videos"] if item["id"] == snapshot["id"] and item["fingerprint"] == snapshot["fingerprint"]), None)
                 if not item:
                     raise ValueError("The file changed during analysis; rescan and try again")
                 item["suggested_break_points"], item["break_suggestion_source"] = points, source
+                base_revision = catalog["revision"]
                 LIBRARY.write(catalog)
-            return self.send_json({"points": points, "source": source})
+            return self.send_json({"points": points, "source": source, "base_revision":base_revision, "revision":catalog["revision"]})
+        except CatalogueConflict as error:
+            return self.send_json({"error": str(error)}, 409)
         except (ValueError, OSError, RuntimeError) as error:
+            if client_disconnected(error):
+                return
+            if ERROR_LOGGER and isinstance(error, OSError):
+                ERROR_LOGGER.exception("POST %s failed", route)
             return self.send_json({"error": str(error)}, 400)
 
     def log_message(self, fmt, *args):
@@ -289,6 +408,7 @@ def main():
     try:
         with LibrarySession(options.library_root) as SESSION:
             LIBRARY = Catalogue(options.library_root)
+            configure_error_log(LIBRARY.root)
             SCANS = ScanJobs(LIBRARY)
             server = SessionServer(("127.0.0.1", 0), Handler)
             try:

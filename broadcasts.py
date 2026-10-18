@@ -1,6 +1,7 @@
 """Persistent broadcast snapshots, stored separately from editable video labels."""
 import json
 import math
+from catalogue import normalise_episodes
 from pathlib import Path
 
 
@@ -46,6 +47,7 @@ def validate(channels):
                     raise ValueError("Invalid broadcast media")
                 if not isinstance(video.get("break_points"), list) or not all(finite(point) for point in video["break_points"]):
                     raise ValueError("Invalid broadcast break points")
+                normalise_episodes(video.get("episodes", []), video["duration"])
 
 
 def save(root, incoming):

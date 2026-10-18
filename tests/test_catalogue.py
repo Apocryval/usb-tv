@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from catalogue import Catalogue
+from catalogue import Catalogue, CatalogueConflict
 from media import inspect_mp4, suggest_breaks
 
 
@@ -24,7 +24,7 @@ class CatalogueTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.catalog = Catalogue(self.root)
+        self.catalog = Catalogue(self.root, organise_new=False)
 
     def test_mp4_title_duration_and_no_filename_title(self):
         path = self.root / 'Videos' / 'messy_892_xxx.mp4'
@@ -86,7 +86,7 @@ class CatalogueTests(unittest.TestCase):
     def test_read_only_identity_browser_probe_and_validation(self):
         (self.root / 'Videos' / 'unknown.webm').write_bytes(b'not actual media')
         data = self.catalog.scan()
-        data['videos'][0].update(duration=1900, file='Videos/evil.mp4', fingerprint='forged')
+        data['videos'][0].update(duration=1900, file='Videos/evil.mp4')
         saved = self.catalog.save_edits(data)['videos'][0]
         self.assertEqual(saved['file'], 'Videos/unknown.webm')
         self.assertNotEqual(saved['fingerprint'], 'forged')
@@ -95,6 +95,18 @@ class CatalogueTests(unittest.TestCase):
         data['videos'][0]['id'] = '999999'
         with self.assertRaises(ValueError):
             self.catalog.save_edits(data)
+
+    def test_stale_snapshots_and_changed_content_are_rejected(self):
+        path = self.root / 'Videos/one.mp4'
+        path.write_bytes(mp4())
+        old = self.catalog.scan()
+        fresh = self.catalog.save_edits({'videos':[{'id':old['videos'][0]['id'], 'title':'New title'}]})
+        with self.assertRaises(CatalogueConflict):
+            self.catalog.save_edits(old)
+        self.assertEqual(self.catalog.read(), fresh)
+        with self.assertRaises(CatalogueConflict):
+            self.catalog.save_edits({'videos':[{'id':old['videos'][0]['id'], 'fingerprint':'forged', 'title':'Wrong file'}]})
+        self.assertEqual(self.catalog.read(), fresh)
 
     def test_corrupt_catalogue_not_overwritten(self):
         self.catalog.path.write_text('broken')

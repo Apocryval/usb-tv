@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Interchange contract aligned with metadata-studio/taxonomy.json and Studio review reports. Source identity is injected by the workflow, not invented by the model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "suggestions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "policy_version": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "suggestions": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "file",
+          "fingerprint",
+          "type",
+          "title",
+          "genres",
+          "channels",
+          "description",
+          "tags",
+          "evidence",
+          "uncertainties",
+          "confidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "file": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "fingerprint": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "programme",
+              "advert"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "Animation",
+                "Comedy",
+                "Sketch Comedy",
+                "Documentary",
+                "Education",
+                "Science",
+                "Technology",
+                "History",
+                "Nature",
+                "Drama",
+                "Sci-Fi",
+                "Fantasy",
+                "Horror",
+                "Music",
+                "Gaming",
+                "Entertainment",
+                "News & Current Affairs",
+                "Sport",
+                "Lifestyle",
+                "Experimental"
+              ]
+            },
+            "maxItems": 4,
+            "uniqueItems": true
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "Cartoons",
+                "Documentaries",
+                "Interdimensional Cable",
+                "Sunday Morning Prerecorded",
+                "Now That's What I Call Shit!",
+                "TTTV",
+                "Goblin TV",
+                "CRTV"
+              ]
+            },
+            "maxItems": 8,
+            "uniqueItems": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "uniqueItems": true
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "uncertainties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "maxItems": 20
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "original_release_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1800,
+            "maximum": 2100
+          },
+          "release_evidence": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "analysis": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "library_id": {
+      "type": "string"
+    },
+    "policy_digest": {
+      "type": "string"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "metadata_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    },
+    "pilot_status": {
+      "type": "string"
+    },
+    "taglines_enabled": {
+      "const": false
+    }
+  }
+}

@@ -2,12 +2,25 @@
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import tempfile
 import zipfile
 from contextlib import contextmanager
-from distribution import UPDATE_FILES
+from distribution import UPDATE_FILES, LEGACY_UPDATE_FILES, TARGET_APPS
+
+
+def application_file(name):
+    """Allow new app files while keeping media, tools and runtime data private."""
+    parts = PurePosixPath(name).parts
+    if not parts or "/".join(parts) != name or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.\-]*", part) or part in (".", "..") or part.endswith((" ", ".")) for part in parts):
+        return False
+    if len(parts) == 1:
+        return (PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"}
+                or name in {"requirements-build.txt", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
+                            "update-usbtv.sh", "update-usbtv.command", "Update USB.tv.bat"})
+    return len(parts) >= 3 and parts[0] == "Apps" and parts[1] in TARGET_APPS
 
 
 @contextmanager
@@ -37,8 +50,7 @@ def install_update(archive_path, library_root):
         with zipfile.ZipFile(archive_path) as archive:
             entries = archive.infolist()
             names = [entry.filename for entry in entries]
-            expected = UPDATE_FILES | {"update-manifest.json"}
-            if len(names) != len(set(names)) or set(names) != expected:
+            if len(names) != len(set(names)) or "update-manifest.json" not in names:
                 raise ValueError("This is not a complete USB.tv all-platform update ZIP")
             if sum(entry.file_size for entry in entries) > 500_000_000:
                 raise ValueError("Update package is too large")
@@ -46,9 +58,20 @@ def install_update(archive_path, library_root):
             if manifest_entry.file_size > 64_000:
                 raise ValueError("Invalid update manifest")
             manifest = json.loads(archive.read(manifest_entry))
-            if not isinstance(manifest, dict) or manifest.get("format") != 1 or not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != UPDATE_FILES:
+            if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
                 raise ValueError("Unsupported update manifest")
-            for name in sorted(UPDATE_FILES):
+            files = set(manifest["files"])
+            if manifest.get("format") == 1:
+                valid = files == UPDATE_FILES or files == LEGACY_UPDATE_FILES
+            elif manifest.get("format") == 2:
+                valid = UPDATE_FILES <= files and all(application_file(name) for name in files)
+            else:
+                valid = False
+            if (not valid or set(names) != files | {"update-manifest.json"}
+                    or len({name.casefold() for name in names}) != len(names)
+                    or not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in manifest["files"].values())):
+                raise ValueError("Unsupported or unsafe update manifest")
+            for name in sorted(files):
                 destination = root / name
                 # Do not follow pre-existing symlinks out of the USB library.
                 if any(part.is_symlink() for part in [destination, *destination.parents] if part != root and part.is_relative_to(root)):
@@ -71,7 +94,7 @@ def install_update(archive_path, library_root):
                     target.chmod(0o755)
         installed = []
         try:
-            for name in sorted(UPDATE_FILES):
+            for name in sorted(files):
                 destination = root / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 previous = backup / name

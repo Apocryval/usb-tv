@@ -52,3 +52,34 @@ test('case variations do not create duplicate suggested genre names',()=>{
   const suggestion=S.suggest(video('1','Videos/Comedy/test.mp4'),{...catalog,genres:['comedy']});
   assert.deepEqual(suggestion.genres,['comedy']);
 });
+
+test('classification template roundtrips identity, type, copy and review evidence',()=>{
+  const source={...catalog,videos:[{...catalog.videos[0],fingerprint:'content-hash'}]};
+  const row={...S.suggest(source.videos[0],source),type:'advert',title:'A clip',
+    description:'A factual description, with punctuation.',tags:['odd','retro'],
+    tagline:'A television hook',tagline_goblin:'A grubby little hook',
+    evidence:'Frame 00:12 shows a product; transcript 00:15 names it.',
+    uncertainties:['May be a parody, rather than a real advert.','No date visible.'],confidence:.72};
+  const csv=S.exportCsv([row],source), result=S.importText(csv,source,{mode:'replace'});
+  assert.equal(result.skipped.length,0);
+  for(const field of ['type','title','description','tagline','tagline_goblin','evidence','confidence'])
+    assert.deepEqual(result.found[0][field],row[field]);
+  assert.deepEqual(result.found[0].tags,row.tags);
+  assert.deepEqual(result.found[0].uncertainties,row.uncertainties);
+  assert.equal(result.found[0].selected,false);
+  assert(result.found[0].reasons.some(reason=>reason.includes('72%')));
+  assert.equal(S.importText(csv,{...source,videos:[{...source.videos[0],fingerprint:'changed'}]}).found.length,0);
+});
+
+test('classification imports reject invalid type and confidence without selecting rows',()=>{
+  for(const extra of [{type:'movie'},{confidence:2},{confidence:'unknown'},{confidence:true},{uncertainties:{unknown:true}}]) {
+    const result=S.importText(JSON.stringify([{id:'000001',...extra}]),catalog);
+    assert.equal(result.found.length,0);
+    assert.equal(result.skipped.length,1);
+  }
+  const result=S.importText(JSON.stringify({schema_version:1,policy_version:'test',suggestions:[{
+    id:'000001',type:'programme',confidence:null,uncertainties:['No speech'],description:'A silent clip.'}]}),catalog);
+  assert.equal(result.found.length,1);
+  assert.equal(result.found[0].selected,false);
+  assert.equal(result.found[0].confidence,null);
+});

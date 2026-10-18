@@ -9,6 +9,108 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import time
+
+LOUDNESS_VERSION = 1
+
+
+def loudness_result(measurement):
+    """Choose constant gain towards -18 LUFS, capped at +12 dB and -1.5 dBTP."""
+    integrated = float(measurement["input_i"])
+    peak = float(measurement["input_tp"])
+    if not math.isfinite(integrated) or not math.isfinite(peak):
+        return {"status": "silent", "gain_db": 0}
+    gain = min(-18 - integrated, 12, -1.5 - peak)
+    return {"status": "ready", "integrated_lufs": integrated, "true_peak_db": peak,
+            "gain_db": round(max(-60, gain), 3)}
+
+
+def measure_loudness(path, ffmpeg, cancelled=lambda: False, timeout=3600):
+    command = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-threads", "1", "-i", str(path),
+               "-map", "0:a:0", "-vn", "-sn", "-dn", "-af",
+               "loudnorm=I=-18:TP=-1.5:LRA=50:print_format=json", "-f", "null", "-"]
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **options)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if cancelled():
+                raise InterruptedError("Audio analysis paused; completed measurements are saved.")
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Audio analysis timed out.")
+            try:
+                _, stderr = process.communicate(timeout=.25)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        log = stderr.decode("utf-8", errors="replace")
+        if process.returncode:
+            if "matches no streams" in log or "does not contain any stream" in log:
+                return {"status": "no_audio", "gain_db": 0}
+            raise RuntimeError("FFmpeg could not read this file's audio.")
+        for match in reversed(re.findall(r'\{[^{}]*"input_i"[^{}]*\}', log)):
+            return loudness_result(json.loads(match))
+        raise RuntimeError("FFmpeg did not return a loudness measurement.")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill(); process.communicate()
+
+
+def convert_mp4(source, destination, root, cancelled=lambda: False):
+    ffmpeg = tool_path("ffmpeg", root)
+    if not ffmpeg:
+        raise ValueError("New video conversion needs FFmpeg. The original file has been retained.")
+    original = inspect_media(source, root)
+    technical = original.get("technical", {})
+    copy_video = technical.get("video_codec") == "h264" and technical.get("pixel_format") == "yuv420p"
+    command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y", "-i", str(source),
+               "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0", "-map_chapters", "0"]
+    if copy_video:
+        command += ["-c:v", "copy"]
+    else:
+        command += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]
+    command += ["-c:a", "copy"] if technical.get("audio_codec") == "aac" else ["-c:a", "aac", "-b:a", "192k"]
+    command += ["-movflags", "+faststart", "-f", "mp4", str(destination)]
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **options)
+    deadline = time.monotonic() + min(86400, max(3600, number(original.get("duration")) * 4))
+    try:
+        while True:
+            if cancelled():
+                raise InterruptedError("Conversion paused; the original file is retained.")
+            if time.monotonic() >= deadline:
+                raise ValueError("MP4 conversion timed out; the original file is retained.")
+            try:
+                _, stderr = process.communicate(timeout=.25)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode:
+            raise ValueError("FFmpeg could not convert this video; the original file is retained.")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill(); process.communicate()
+    converted = inspect_media(destination, root)
+    duration = number(converted.get("duration"))
+    if duration <= 0 or Path(destination).stat().st_size == 0:
+        raise ValueError("Converted MP4 failed its duration check; original retained.")
+    expected = number(original.get("duration"))
+    if expected > 0 and abs(duration - expected) > max(2, expected * .01):
+        raise ValueError("Converted MP4 has an unexpected duration; original retained.")
+    with Path(destination).open("rb") as handle:
+        header = handle.read(12)
+    if header[4:8] != b"ftyp":
+        raise ValueError("Converted file is not an MP4; original retained.")
+    return converted
 
 
 def tool_path(name, root):
@@ -119,12 +221,16 @@ def inspect_media(path, root):
             tags = {k.lower(): v for k, v in fmt.get("tags", {}).items()}
             result.update(duration=number(fmt.get("duration")), title=str(tags.get("title", "")), genre=str(tags.get("genre", "")), description=str(tags.get("description", "")))
             result["technical"]["container"] = fmt.get("format_name", result["technical"]["container"])
+            inspected = set()
             for stream in data.get("streams", []):
                 kind = stream.get("codec_type")
+                if kind not in ("video", "audio") or kind in inspected:
+                    continue
+                inspected.add(kind)
                 if kind in ("video", "audio"):
                     result["technical"][kind + "_codec"] = stream.get("codec_name", "")
                 if kind == "video":
-                    result["technical"].update(width=stream.get("width", 0), height=stream.get("height", 0))
+                    result["technical"].update(width=stream.get("width", 0), height=stream.get("height", 0), pixel_format=stream.get("pix_fmt", ""))
             result["chapters"] = [number(chapter.get("start_time")) for chapter in data.get("chapters", [])]
             return result
         except (OSError, subprocess.SubprocessError, ValueError):
