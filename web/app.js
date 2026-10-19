@@ -216,6 +216,15 @@ function hidePlayerControls() {
   clearTimeout(cinemaHideTimer);
   $('#player-dialog').classList.remove('controls-visible');
 }
+function handlePlayerPointerDown() {
+  // An ordinary viewer click reveals controls, not a stale tuning ident.
+  // Keep unfinished numeric entry visible until committed or cancelled.
+  if (!channelEntry.digits) {
+    clearTimeout(channelEntry.hideTimer);
+    $("#channel-osd").hidden = true;
+  }
+  revealPlayerControls();
+}
 function exitVideoView() {
   $("#player-dialog").classList.remove("video-fills-screen","controls-visible");
   clearTimeout(cinemaHideTimer);
@@ -261,7 +270,8 @@ function fullscreenChanged() {
   updateFullscreenButtons();
 }
 for (const name of ["fullscreenchange","webkitfullscreenchange"]) document.addEventListener(name,fullscreenChanged);
-for (const name of ["pointermove","pointerdown"]) $("#player-dialog").addEventListener(name,revealPlayerControls);
+$("#player-dialog").addEventListener("pointermove",revealPlayerControls);
+$("#player-dialog").addEventListener("pointerdown",handlePlayerPointerDown);
 window.addEventListener("keydown",event=>{
   if (event.key === "Escape" && videoFillsScreen() && $("#quick-label-panel").hidden) {
     event.preventDefault();event.stopImmediatePropagation();exitVideoView();
@@ -291,6 +301,8 @@ function updatePlaybackControls() {
   $('#programme-next').title = state.playback?.mode==='chaos'?'Skip to the next Chaos video':'Watch the next programme or catch up to live';
   $('#return-live').hidden = state.playback?.mode !== 'replay';
   $('#admin-playback-controls').hidden = !adminPlaybackEnabled() || state.playback?.mode !== 'channel';
+  $('#call-network').hidden = !state.catalog.settings?.advanced_mode || state.playback?.mode !== 'channel';
+  $('#call-network').disabled = adminAdvancing || !broadcastState.ready || !$('#quick-label-panel').hidden;
   $("#preview-seek-label").hidden = false;
   $("#preview-seek").min = progress.min;
   $("#preview-seek").max = Math.max(progress.min+.1,progress.max);
@@ -303,8 +315,8 @@ function playerProgress() {
   const current=playback?.mode==='replay'?playback.current:playback?.mode==='channel'?playback.current || Schedule.locate(timeline(playback.channel)):null;
   let min=0,max=Number.isFinite(player.duration)?player.duration:0;
   if(current) {
-    min=current.segment.advert?current.segment.offset:current.block.video.source_offset||0;
-    max=current.segment.advert?min+current.segment.duration:min+Number(current.block.video.duration);
+    min=(current.segment.advert || current.segment.bumper)?current.segment.offset:current.block.video.source_offset||0;
+    max=(current.segment.advert || current.segment.bumper)?min+current.segment.duration:min+Number(current.block.video.duration);
   }
   const position = current && playback.loaded === false ? current.position : player.currentTime || min;
   return {min,max,value:Math.max(min,Math.min(max,position))};
@@ -314,7 +326,7 @@ function seekPlayback(position) {
   if (!Number.isFinite(position) || $('#quick-label-panel').dataset.saving==='true') return;
   const progress=playerProgress();
   if(['preview','chaos'].includes(playback?.mode)) {
-    if (progress.max>progress.min) player.currentTime=Math.max(progress.min,Math.min(position,progress.max-.05));
+    if (progress.max>progress.min) { player.currentTime=Math.max(progress.min,Math.min(position,progress.max-.05)); }
     return;
   }
   if(!['channel','replay'].includes(playback?.mode))return;
@@ -322,12 +334,12 @@ function seekPlayback(position) {
   const current=playback.current || Schedule.locate(line);
   if(!current)return;
   const target=Math.max(progress.min,Math.min(position,progress.max-.05));
-  const segment=current.segment.advert?current.segment:current.block.segments.find(s=>!s.advert && target>=s.offset && target<s.offset+s.duration);
+  const segment=(current.segment.advert || current.segment.bumper)?current.segment:current.block.segments.find(s=>!s.advert && !s.bumper && target>=s.offset && target<s.offset+s.duration);
   if(!segment)return;
   const cycleStart=current.start-current.block.start*1000;
   const cursor=cycleStart+(segment.start+target-segment.offset)*1000;
   if(cursor>=Date.now()) {
-    if (playback.mode==='replay') returnToLive();
+    if (playback.mode==='replay') returnToLive(false);
     else {showToast('You are already watching live.');updatePlaybackControls();}
     return;
   }
@@ -360,15 +372,20 @@ function adminPlaybackEnabled() {
 let adminAdvancing = false;
 async function advanceChannel(action) {
   const playback = state.playback;
-  if (!adminPlaybackEnabled() || adminAdvancing || playback?.mode !== 'channel'
+  const network = action === 'network';
+  const enabled = () => network ? Boolean(state.catalog.settings?.advanced_mode) : adminPlaybackEnabled();
+  if (!enabled() || adminAdvancing || playback?.mode !== 'channel'
       || $('#quick-label-panel').dataset.saving === 'true') return;
+  if (network && !$('#quick-label-panel').hidden) {
+    showToast('Finish or cancel your labels before calling the network.'); return;
+  }
   adminAdvancing = true;
-  const buttons = [...$('#admin-playback-controls').querySelectorAll('button')];
+  const buttons = [...$('#admin-playback-controls').querySelectorAll('button'), $('#call-network')];
   buttons.forEach(button=>{button.disabled=true;});
   try {
     await broadcastQueue;
-    if (state.playback !== playback || !adminPlaybackEnabled()) return;
-    const plans = USBTvPlans.advance(state.catalog,broadcastState.channels,playback.channel,action);
+    if (state.playback !== playback || !enabled()) return;
+    const plans = USBTvPlans.advance(state.catalog,broadcastState.channels,playback.channel,network ? 'skip' : action);
     // Apply locally only after the saved revision is accepted by the server.
     await persistBroadcasts(plans);
     broadcastState.channels = plans;
@@ -376,10 +393,11 @@ async function advanceChannel(action) {
     if (state.playback === playback) {
       closeQuickLabels(); syncChannel(true); revealPlayerControls();
     }
-    showToast(action === 'skip' ? 'Channel advanced to the next video' : 'Channel advanced 30 seconds');
+    showToast(network ? 'Network called — next video is on air.' : action === 'skip' ? 'Channel advanced to the next video' : 'Channel advanced 30 seconds');
   } catch (error) { showToast(error.message); }
-  finally {adminAdvancing=false;buttons.forEach(button=>{button.disabled=false;});}
+  finally {adminAdvancing=false;buttons.forEach(button=>{button.disabled=false;});updatePlaybackControls();}
 }
+$('#call-network').addEventListener('click',()=>advanceChannel('network'));
 $('#admin-forward').addEventListener('click',()=>advanceChannel('forward'));
 $('#admin-skip').addEventListener('click',()=>advanceChannel('skip'));
 $('#admin-playback-toggle').addEventListener('change',async event=>{
@@ -415,7 +433,7 @@ function applyThemeSetting() {
   $(".brand-name").textContent = goblin ? "GOBLIN CABLE" : theme === "teletext" ? "USB TEXT" : "USB.tv";
   $(".brand-tag").textContent = goblin ? "BROADCASTING UNDER THE FLOORBOARDS" : theme === "teletext" ? "P100 · YOUR PERSONAL BROADCAST" : "YOUR PERSONAL BROADCAST";
   $("#page-guide h1").textContent = goblin ? "Tonight on Goblin Cable" : theme === "teletext" ? "100 TV GUIDE" : "The channel guide";
-  $("#page-guide .subheading").textContent = goblin ? "A hoard of good tapes. A slightly suspicious signal." : "A shuffled rotation, tuned to your collection.";
+  $("#page-guide .subheading").textContent = goblin ? "" : "A shuffled rotation, tuned to your collection.";
   document.querySelector('meta[name="theme-color"]').content = { satellite: "#09236c", teletext: "#080808", goblin: "#141a16" }[theme];
 }
 
@@ -487,7 +505,7 @@ function timeline(channel) {
   return state.timelines.get(channel);
 }
 function reviewReasons(video) {
-  return [!video.title?.trim() && "Needs title", !(video.duration > 0) && "Unreadable length / codec", video.type !== "advert" && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (video.type !== "advert" && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
+  return [!video.title?.trim() && "Needs title", !(video.duration > 0) && "Unreadable length / codec", !["advert","bumper"].includes(video.type) && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (!["advert","bumper"].includes(video.type) && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
 }
 function guideMinutes() {
   const value = Number(state.catalog.settings?.guide_minutes ?? 120);
@@ -537,6 +555,7 @@ function renderGuide() {
   $("#guide-rows").innerHTML = names.map((channel, index) => {
     const slots = Schedule.guide(timeline(channel), guideStart, horizon);
     const color = palette[index % palette.length];
+    const moss = [...channel].reduce((hash,char)=>(Math.imul(hash,31)+char.charCodeAt(0))>>>0,0);
     const programmes = slots.map(slot => {
       slot.current = slot.start <= now && slot.end > now;
       slot.progress = slot.current ? (now - slot.start) / (slot.end - slot.start) : 0;
@@ -544,7 +563,7 @@ function renderGuide() {
       return `<button class="programme ${slot.current ? "current" : "next"} ${width < 12 ? "compact" : ""}" style="width:${width}%;--progress:${Math.round(slot.progress*100)}%" data-channel="${esc(channel)}" data-start="${slot.start}" data-end="${slot.end}" data-guide-key="${esc(JSON.stringify([channel,slot.video.id,slot.start]))}" data-programme-title="${esc(displayTitle(slot.video))}" data-programme-time="${formatTime(new Date(slot.start))}–${formatTime(new Date(slot.end))}" title="${esc(displayTitle(slot.video))} · ${formatTime(new Date(slot.start))}–${formatTime(new Date(slot.end))} · Tune into ${esc(channel)}"><span class="programme-tag">${slot.current ? "ON NOW" : esc((slot.video.genres || []).join(" / ").toUpperCase())}</span><span class="programme-title"><span class="programme-title-text">${esc(displayTitle(slot.video))}</span></span><span class="programme-time">${formatTime(new Date(slot.start))} — ${formatTime(new Date(slot.end))}</span></button>`;
     }).join("");
     const onNow = window.live && slots[0] ? `ON NOW · ${displayTitle(slots[0].video)}` : 'TUNE IN LIVE';
-    return `<div class="guide-row"><button class="channel-card" data-channel="${esc(channel)}" aria-label="Tune into ${esc(channel)}"><span class="channel-number">${String(index + 1).padStart(3,"0")}</span><span class="channel-logo" style="color:${color};background:${color}18">${esc(channel.slice(0,1).toUpperCase())}</span><span class="channel-info"><span class="channel-name">${esc(channel)}</span><span class="channel-meta" title="${esc(onNow)}">${esc(onNow)}</span></span></button><div class="schedule-track">${programmes}</div></div>`;
+    return `<div class="guide-row"><button class="channel-card" data-moss="${moss%4}" data-moss-flip="${(moss>>>2)%2}" data-channel="${esc(channel)}" aria-label="Tune into ${esc(channel)}"><span class="channel-number">${String(index + 1).padStart(3,"0")}</span><span class="channel-logo" style="color:${color};background:${color}18">${esc(channel.slice(0,1).toUpperCase())}</span><span class="channel-info"><span class="channel-name">${esc(channel)}</span><span class="channel-meta" title="${esc(onNow)}">${esc(onNow)}</span></span></button><div class="schedule-track">${programmes}</div></div>`;
   }).join("");
   $("#guide-rows").querySelectorAll("[data-channel]").forEach(button => {
     button.addEventListener("click", () => tuneChannel(button.dataset.channel));
@@ -696,9 +715,9 @@ function syncGuidePreview() {
   if (!visible) { player.pause(); return; }
   const video = current.segment.video;
   window.USBTvAudio?.setTrack(state.catalog.videos.find(item=>item.id===video.id) || video,player);
-  $("#preview-channel").textContent = `${guidePreview.channel} · ${current.segment.advert ? "ADVERTISEMENT BREAK" : "ON AIR"}`;
+  $("#preview-channel").textContent = `${guidePreview.channel} · ${(current.segment.advert || current.segment.bumper) ? (current.segment.bumper ? "STATION BUMPER" : "ADVERTISEMENT BREAK") : "ON AIR"}`;
   $("#preview-title").textContent = displayTitle(video);
-  $("#preview-description").textContent = current.segment.advert ? `Advert break during ${displayTitle(current.block.video)}.` : video.description || "Now showing on your personal broadcast.";
+  $("#preview-description").textContent = (current.segment.advert || current.segment.bumper) ? `Advert break during ${displayTitle(current.block.video)}.` : video.description || "Now showing on your personal broadcast.";
   $("#preview-meta").textContent = `${formatTime(new Date(current.start))}–${formatTime(new Date(current.end))} · ${(video.genres || []).join(" / ") || "Uncategorised"}`;
   const key = `${guidePreview.channel}:${current.key}`;
   if (guidePreview.key !== key) {
@@ -725,7 +744,7 @@ function syncGuidePreview() {
   }
 }
 const libraryView = {page:0}, bulkView = {page:0};
-const unassigned = video => video.type !== "advert" && !video.channels?.length;
+const unassigned = video => !["advert","bumper"].includes(video.type) && !video.channels?.length;
 function labelFilters(prefix) {
   const records=prefix==='bulk'?[...state.catalog.videos,...bulkRows]:state.catalog.videos;
   const genres=[...new Set([...(state.catalog.genres||[]),...records.flatMap(v=>v.genres||[])])].sort((a,b)=>a.localeCompare(b));
@@ -778,7 +797,7 @@ function renderLibrary() {
   $("#library-empty").classList.toggle("hidden", all.length > 0);
   $(".table-wrap").classList.toggle("hidden", videos.length === 0);
   $("#read-page-lengths").disabled = !videos.some(video=>!video.missing && !(video.duration>0));
-  $("#library-body").innerHTML = videos.map(video => `<tr><td><span class="media-id">#${esc(video.id)}</span><div class="library-title">${esc(displayTitle(video))}</div><div class="bulk-file">${esc(video.file)}</div><div class="library-tags">${esc((video.tags||[]).join(' · '))}</div></td><td>${video.type === "advert" ? "Advert" : "Programme"}${video.enabled === false ? " · Disabled" : ""}</td><td class="duration-cell">${formatDuration(video.duration)}</td><td>${esc((video.genres || []).join(", ") || "—")}</td><td>${esc(video.channels?.join(", ") || (video.type === "advert" ? "All channels" : "No channels"))}<span class="review-label">${esc(reviewReasons(video).join(" · "))}</span></td><td><button class="media-edit" data-edit="${esc(video.id)}">EDIT</button></td></tr>`).join("");
+  $("#library-body").innerHTML = videos.map(video => `<tr><td><span class="media-id">#${esc(video.id)}</span><div class="library-title">${esc(displayTitle(video))}</div><div class="bulk-file">${esc(video.file)}</div><div class="library-tags">${esc((video.tags||[]).join(' · '))}</div></td><td>${video.type === "bumper" ? "Bumper" : video.type === "advert" ? "Advert" : "Programme"}${video.enabled === false ? " · Disabled" : ""}</td><td class="duration-cell">${formatDuration(video.duration)}</td><td>${esc((video.genres || []).join(", ") || "—")}</td><td>${esc(video.channels?.join(", ") || (["advert","bumper"].includes(video.type) ? "All channels" : "No channels"))}<span class="review-label">${esc(reviewReasons(video).join(" · "))}</span></td><td><button class="media-edit" data-edit="${esc(video.id)}">EDIT</button></td></tr>`).join("");
   $("#library-body").querySelectorAll("[data-edit]").forEach(button => button.addEventListener("click", () => openEditor(button.dataset.edit)));
 }
 let reshuffling = false;
@@ -850,7 +869,7 @@ function renderBulkRows() {
   const visible = pageItems(filteredBulkRows(),"bulk",bulkView);
   $("#bulk-body").innerHTML = visible.map(row => {
     const video = actual.get(row.id);
-    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><div class="settings-note">${formatDuration(video.duration)}${row.enabled===false||row.enabled===undefined&&video.enabled===false?" · Disabled":""}</div><div class="library-tags">${esc((row.tags||[]).join(" · "))}</div><span class="settings-note">${esc([...row.reasons,...reviewReasons(video).filter(reason=>reason.startsWith("Possibly multi-episode"))].join(" · "))}</span>${video.type !== "advert" && (video.duration > 3000 || video.episode_review === "multiple") ? `<button type="button" class="media-edit" data-review-episodes="${esc(video.id)}">REVIEW EPISODES</button>` : ""}</td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Type, description, tags &amp; taglines</summary><label>Type<select data-bulk-field="type" aria-label="Type for ${esc(row.id)}"><option value="programme" ${(row.type || video.type) === "programme" ? "selected" : ""}>Programme</option><option value="advert" ${(row.type || video.type) === "advert" ? "selected" : ""}>Advert</option></select></label>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${video.type === "advert" ? "All channels" : "Choose channels"}"></td></tr>`;
+    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><div class="settings-note">${formatDuration(video.duration)}${row.enabled===false||row.enabled===undefined&&video.enabled===false?" · Disabled":""}</div><div class="library-tags">${esc((row.tags||[]).join(" · "))}</div><span class="settings-note">${esc([...row.reasons,...reviewReasons(video).filter(reason=>reason.startsWith("Possibly multi-episode"))].join(" · "))}</span>${!["advert","bumper"].includes(video.type) && (video.duration > 3000 || video.episode_review === "multiple") ? `<button type="button" class="media-edit" data-review-episodes="${esc(video.id)}">REVIEW EPISODES</button>` : ""}</td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Type, description, tags &amp; taglines</summary><label>Type<select data-bulk-field="type" aria-label="Type for ${esc(row.id)}"><option value="programme" ${(row.type || video.type) === "programme" ? "selected" : ""}>Programme</option><option value="advert" ${(row.type || video.type) === "advert" ? "selected" : ""}>Advert</option><option value="bumper" ${(row.type || video.type) === "bumper" ? "selected" : ""}>Bumper</option></select></label><label>Bumper position<select data-bulk-field="bumper_role"><option value="to_ads" ${!["from_ads","both"].includes(row.bumper_role || video.bumper_role) ? "selected" : ""}>Before advert break</option><option value="from_ads" ${(row.bumper_role || video.bumper_role) === "from_ads" ? "selected" : ""}>After advert break</option><option value="both" ${(row.bumper_role || video.bumper_role) === "both" ? "selected" : ""}>Before and after</option></select></label>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${["advert","bumper"].includes(video.type) ? "All channels" : "Choose channels"}"></td></tr>`;
   }).join("");
   $("#bulk-body").querySelectorAll("[data-review-episodes]").forEach(button=>button.addEventListener("click",()=>openEditor(button.dataset.reviewEpisodes)));
   $("#bulk-body").querySelectorAll("[data-bulk-select]").forEach(input => input.addEventListener("change", () => {
@@ -960,7 +979,7 @@ async function applyBulk(rulesOnly = false) {
     selected.forEach(row => {
       const video = state.catalog.videos.find(video => video.id === row.id);
       video.title = row.title.trim(); video.genres = row.genres; video.channels = row.channels;
-      for (const field of ["type", "enabled", "description", "tags", "tagline", "tagline_goblin"]) if (row[field] !== undefined) video[field] = row[field];
+      for (const field of ["type", "bumper_role", "enabled", "description", "tags", "tagline", "tagline_goblin"]) if (row[field] !== undefined) video[field] = row[field];
     });
     state.catalog = await saveCatalog();
     $("#bulk-dialog").close(); renderAll();
@@ -1028,7 +1047,8 @@ function renderEpisodeRows(episodes) {
   $("#episode-rows").innerHTML = episodes.map((episode,index) => `<div class="episode-row"><label>Episode ${index+1}<input data-episode="title" maxlength="300" value="${esc(episode.title)}"></label><label>Start<input data-episode="start" value="${markerStamp(episode.start)}"></label><label>End<input data-episode="end" value="${markerStamp(episode.end)}"></label><div class="editor-actions"><button type="button" data-episode-preview="start">PREVIEW START</button><button type="button" data-episode-preview="end">PREVIEW END</button><button type="button" data-episode-remove>REMOVE</button></div></div>`).join("");
 }
 function updateEpisodeEditor() {
-  const programme = $("#edit-type").value !== "advert";
+  const programme = $("#edit-type").value === "programme";
+  $("#edit-bumper-options").hidden = $("#edit-type").value !== "bumper";
   $("#episode-review-panel").hidden = !programme;
   $("#episode-markers").hidden = $("#edit-episode-review").value !== "multiple";
 }
@@ -1090,7 +1110,7 @@ function openEditor(id, draft = null) {
   if (!video) return;
   if (draft) {
     video = {...video};
-    for (const key of ['title','type','genres','channels','tags','enabled','description','tagline','tagline_goblin','break_points','breaks_approved','episode_review','episodes']) video[key] = structuredClone(draft[key]);
+    for (const key of ['title','type','bumper_role','genres','channels','tags','enabled','description','tagline','tagline_goblin','break_points','breaks_approved','episode_review','episodes']) video[key] = structuredClone(draft[key]);
   }
   state.editing = structuredClone(video);
   $("#editor-heading").textContent = `Edit media #${video.id}`;
@@ -1098,8 +1118,9 @@ function openEditor(id, draft = null) {
   $("#edit-title").value = video.title || "";
   $("#new-genre").value = "";
   $("#edit-type").value = video.type;
+  $("#edit-bumper-role").value = video.bumper_role || "to_ads";
   $("#edit-episode-review").value = video.episode_review || "unchecked";
-  $("#episode-review-panel").open = video.type !== "advert" && (video.duration > 3000 || video.episode_review === "multiple");
+  $("#episode-review-panel").open = !["advert","bumper"].includes(video.type) && (video.duration > 3000 || video.episode_review === "multiple");
   $("#episode-review-hint").textContent = video.duration > 3000 && !["single","multiple"].includes(video.episode_review) ? "· Possibly multi-episode" : "";
   $("#episode-count").value = Math.max(2,video.episodes?.length || 2);
   renderEpisodeRows(video.episodes || []); updateEpisodeEditor();
@@ -1114,7 +1135,7 @@ function openEditor(id, draft = null) {
   const technical = video.technical || {};
   $("#editor-technical").textContent = [formatDuration(video.duration), technical.width && `${technical.width}×${technical.height}`, technical.video_codec, technical.audio_codec, video.size && `${(video.size/1048576).toFixed(1)} MB`, video.added_at && `Added ${new Date(video.added_at).toLocaleDateString()}`].filter(Boolean).join(" · ");
   $("#preview-media").disabled = Boolean(video.missing);
-  $("#break-editor").hidden = video.type === "advert";
+  $("#break-editor").hidden = video.type !== "programme";
   renderChoices(); renderSuggestions();
   $("#editor-dialog").showModal();
 }
@@ -1128,6 +1149,7 @@ async function saveEditor(event) {
     if (pendingGenre && !draft.genres.includes(pendingGenre)) draft.genres.push(pendingGenre);
     draft.title = $("#edit-title").value.trim();
     draft.type = $("#edit-type").value;
+    draft.bumper_role = $("#edit-bumper-role").value;
     draft.episode_review = $("#edit-episode-review").value;
     draft.episodes = draft.episode_review === "multiple" ? readEpisodeRows() : draft.episodes || [];
     if (draft.episode_review === "multiple" && draft.episodes.length < 2) throw new Error("Add at least two episodes, or choose Single programme.");
@@ -1190,9 +1212,10 @@ function openQuickLabels() {
   $("#quick-label-heading").textContent = `Edit #${video.id} · ${displayTitle(video)}`;
   $("#quick-label-file").textContent = video.file;
   $("#quick-label-title").value = video.title || "";
-  $('#quick-label-type').value = video.type === 'advert' ? 'advert' : 'programme';
+  $('#quick-label-type').value = video.type;
+  $('#quick-label-bumper-role').value = video.bumper_role || 'to_ads';
   $('#quick-label-enabled').checked = video.enabled !== false;
-  $('#quick-label-all-channels').checked = video.type === 'advert' && !video.channels.length;
+  $('#quick-label-all-channels').checked = ['advert','bumper'].includes(video.type) && !video.channels.length;
   updateQuickLabelType();
   $("#quick-label-genres").value = (video.genres || []).join(", ");
   $("#quick-label-tags").value = (video.tags || []).join(", ");
@@ -1207,16 +1230,17 @@ function openQuickLabels() {
 }
 $("#quick-label-toggle").addEventListener("click",()=>$("#quick-label-panel").hidden ? openQuickLabels() : closeQuickLabels());
 function updateQuickLabelType() {
-  const advert = $('#quick-label-type').value === 'advert';
+  const advert = ['advert','bumper'].includes($('#quick-label-type').value);
+  $('#quick-label-bumper-options').hidden = $('#quick-label-type').value !== 'bumper';
   $('#quick-label-global-option').hidden = !advert;
   $('#quick-label-channel-legend').textContent = advert ? 'Allowed channels' : 'Show on channels';
   $('#quick-label-channel-note').textContent = advert
-    ? 'Untick a channel to exclude this advert. All channels also includes future channels. To stop it everywhere, turn off Enabled for broadcast. Lineup changes normally wait for the next scheduled update; reshuffle a channel to apply them now.'
+    ? 'Untick a channel to exclude this advert or bumper. All channels also includes future channels. To stop it everywhere, turn off Enabled for broadcast. Lineup changes normally wait for the next scheduled update; reshuffle a channel to apply them now.'
     : 'Interdimensional Customs automatically shows unassigned programmes. Assigning a channel or changing to Advert removes this programme from Customs after the current showing finishes.';
 }
 $('#quick-label-type').addEventListener('change', () => {
   // Converting an unrestricted advert must not assign a programme everywhere.
-  if ($('#quick-label-type').value !== 'advert' && $('#quick-label-all-channels').checked) {
+  if ($('#quick-label-type').value === 'programme' && $('#quick-label-all-channels').checked) {
     $('#quick-label-all-channels').checked = false;
     $('#quick-label-channels').querySelectorAll('input').forEach(input => {input.checked = false;});
   }
@@ -1230,18 +1254,18 @@ $("#quick-label-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const video = state.catalog.videos.find(item=>item.id===quickLabelId);
   if (!video || $("#quick-label-panel").dataset.saving === "true") return;
-  const type = $('#quick-label-type').value === 'advert' ? 'advert' : 'programme';
+  const type = $('#quick-label-type').value;
   const enabled = $('#quick-label-enabled').checked;
-  const allChannels = type === 'advert' && $('#quick-label-all-channels').checked;
+  const allChannels = ['advert','bumper'].includes(type) && $('#quick-label-all-channels').checked;
   const channels = [...$("#quick-label-channels").querySelectorAll("input:checked")].map(input=>input.value);
-  if (type === 'advert' && enabled && !allChannels && !channels.length) {
+  if (['advert','bumper'].includes(type) && enabled && !allChannels && !channels.length) {
     $('#quick-label-error').textContent = 'Choose at least one allowed channel, choose All channels, or turn off Enabled for broadcast.';
     return;
   }
   const before = structuredClone(video);
   let metadataSaved = false;
   video.title = $("#quick-label-title").value.trim();
-  video.type = type; video.enabled = enabled;
+  video.type = type; video.bumper_role = $('#quick-label-bumper-role').value; video.enabled = enabled;
   video.genres = USBTvSuggestions.list($("#quick-label-genres").value);
   video.tags = USBTvSuggestions.list($("#quick-label-tags").value);
   video.channels = allChannels ? [] : channels;
@@ -1293,8 +1317,25 @@ function showChannelOsd(number, label = "", temporary = true) {
   const digits = document.createElement("strong"), name = document.createElement("span");
   digits.textContent = number; name.textContent = label;
   osd.append(digits,name); osd.hidden = false;
+  positionChannelOsd();
   clearTimeout(channelEntry.hideTimer);
   if (temporary) channelEntry.hideTimer = setTimeout(() => {osd.hidden=true;},2200);
+}
+function positionChannelOsd() {
+  const dialog = $('#player-dialog'), osd = $('#channel-osd');
+  if (!dialog.open) {osd.style.removeProperty('bottom');return;}
+  if (osd.hidden) return;
+  const box = dialog.getBoundingClientRect(), video = $('#player').getBoundingClientRect();
+  // Stay above the video's lower edge, even when mobile controls sit below it.
+  osd.style.bottom = `${Math.max(16,box.bottom - video.bottom - dialog.clientTop + 54)}px`;
+}
+window.addEventListener('resize',positionChannelOsd);
+document.addEventListener('fullscreenchange',()=>requestAnimationFrame(positionChannelOsd));
+document.addEventListener('webkitfullscreenchange',()=>requestAnimationFrame(positionChannelOsd));
+if (typeof ResizeObserver !== 'undefined') {
+  const osdResizeObserver = new ResizeObserver(positionChannelOsd);
+  osdResizeObserver.observe($('#player-dialog'));
+  osdResizeObserver.observe($('#player'));
 }
 function changeChannel(direction) {
   const names = playableChannels();
@@ -1353,7 +1394,7 @@ window.addEventListener("keydown", event => {
 $("#channel-down").addEventListener("click",()=>changeChannel(-1));
 $("#channel-up").addEventListener("click",()=>changeChannel(1));
 document.addEventListener("fullscreenchange",()=>{if (!document.fullscreenElement) clearChannelEntry();});
-function tuneChannel(channel) {
+function tuneChannel(channel, withStatic = true) {
   if ($("#quick-label-panel").dataset.saving === "true") return;
   closeQuickLabels();
   stopChaosTransition();
@@ -1364,6 +1405,7 @@ function tuneChannel(channel) {
   $("#return-live").hidden = false;
   $("#channel-down").hidden = false; $("#channel-up").hidden = false;
   showPlayer(false); syncGuidePreview(); syncChannel(true);
+  if (withStatic) globalThis.USBTvTransition?.play();
   showChannelOsd(String(playableChannels().indexOf(channel)+1).padStart(3,"0"),channel);
 }
 function previewVideo(id, position = 0) {
@@ -1515,14 +1557,15 @@ function browseChannel(direction) {
   const at=playback.mode==='replay'?playback.current?.start ?? playback.cursor:now;
   const target=Schedule.browseProgramme(line,at,direction,now);
   if (target===null) return;
+  globalThis.USBTvTransition?.play();
   if (target>=now) {returnToLive();return;}
   closeQuickLabels();clearChannelEntry();stopChaosTransition();
   state.playback={mode:'replay',channel:playback.channel,line,cursor:target,current:null,loaded:false};
   loadChannelReplay();revealPlayerControls();
 }
-function returnToLive() {
+function returnToLive(withStatic = true) {
   const playback=state.playback;
-  if (['channel','replay'].includes(playback?.mode)) tuneChannel(playback.channel);
+  if (['channel','replay'].includes(playback?.mode)) tuneChannel(playback.channel, withStatic);
 }
 function loadChannelReplay(autoplay = true) {
   const playback=state.playback;
@@ -1534,8 +1577,8 @@ function loadChannelReplay(autoplay = true) {
   const player=$('#player'), behind=Math.max(1,Math.round((Date.now()-playback.cursor)/60000));
   player.autoplay=autoplay;
   $('#player-status').textContent=`REPLAY · ${playback.channel}`;
-  $('#player-title').textContent=current.segment.advert?`${playback.channel} · Advert break`:displayTitle(current.block.video);
-  $('#player-meta').textContent=`${behind} min behind live · ${current.segment.advert?displayTitle(current.segment.video):'Watching from the lineup'} · Return to live at any time`;
+  $('#player-title').textContent=(current.segment.advert || current.segment.bumper)?`${playback.channel} · ${current.segment.bumper ? "Station bumper" : "Advert break"}`:displayTitle(current.block.video);
+  $('#player-meta').textContent=`${behind} min behind live · ${(current.segment.advert || current.segment.bumper)?displayTitle(current.segment.video):'Watching from the lineup'} · Return to live at any time`;
   $('#quick-label-toggle').disabled=false;
   window.USBTvAudio?.setTrack(state.catalog.videos.find(v=>v.id===current.segment.video.id)||current.segment.video);
   player.onloadedmetadata=()=>{
@@ -1552,12 +1595,12 @@ function advanceChannelReplay() {
   playback.cursor=playback.current.segmentEnd+.5;
   loadChannelReplay();
 }
-$('#programme-previous').addEventListener('click',()=>state.playback?.mode==='chaos'?previousChaos():browseChannel('previous'));
+$('#programme-previous').addEventListener('click',()=>{if(state.playback?.mode==='chaos'){globalThis.USBTvTransition?.play();previousChaos();}else browseChannel('previous');});
 $('#programme-restart').addEventListener('click',()=>{
-  if(state.playback?.mode==='chaos') {$('#player').currentTime=0;$('#player').play().catch(()=>{});}
+  if(state.playback?.mode==='chaos') {globalThis.USBTvTransition?.play();$('#player').currentTime=0;$('#player').play().catch(()=>{});}
   else browseChannel('restart');
 });
-$('#programme-next').addEventListener('click',()=>state.playback?.mode==='chaos'?advanceChaos():browseChannel('next'));
+$('#programme-next').addEventListener('click',()=>{if(state.playback?.mode==='chaos'){globalThis.USBTvTransition?.play();advanceChaos();}else browseChannel('next');});
 // Episode boundaries and internal breaks can occur before the source file ends.
 $('#player').addEventListener('timeupdate',()=>{
   const playback=state.playback;
@@ -1590,12 +1633,12 @@ function syncChannel(force = false) {
   }
   $("#quick-label-toggle").disabled = false;
   const player = $("#player");
-  $("#player-status").textContent = current.segment.advert ? "ADVERTISEMENT BREAK" : `LIVE · ${playback.channel}`;
-  $("#player-title").textContent = current.segment.advert ? `${playback.channel} · Advert break` : displayTitle(current.block.video);
+  $("#player-status").textContent = (current.segment.advert || current.segment.bumper) ? (current.segment.bumper ? "STATION BUMPER" : "ADVERTISEMENT BREAK") : `LIVE · ${playback.channel}`;
+  $("#player-title").textContent = (current.segment.advert || current.segment.bumper) ? `${playback.channel} · ${current.segment.bumper ? "Station bumper" : "Advert break"}` : displayTitle(current.block.video);
   const channelTimeline = current.timeline;
-  const returnsToProgramme = current.block.segments.some(segment => !segment.advert && segment.start > current.segment.start);
+  const returnsToProgramme = current.block.segments.some(segment => !segment.advert && !segment.bumper && segment.start > current.segment.start);
   const following = channelTimeline.blocks[(current.block.index + 1) % channelTimeline.blocks.length].video;
-  $("#player-meta").textContent = current.segment.advert ? `${displayTitle(current.segment.video)} · ${returnsToProgramme ? "Back to " + displayTitle(current.block.video) : "Up next: " + displayTitle(following)}` : `${formatDuration(current.block.video.duration)} · Channel time · Pause resumes live`;
+  $("#player-meta").textContent = (current.segment.advert || current.segment.bumper) ? `${displayTitle(current.segment.video)} · ${returnsToProgramme ? "Back to " + displayTitle(current.block.video) : "Up next: " + displayTitle(following)}` : `${formatDuration(current.block.video.duration)} · Channel time · Pause resumes live`;
   window.USBTvAudio?.setTrack(state.catalog.videos.find(video=>video.id === current.segment.video.id) || current.segment.video);
   if (playback.key !== current.key) {
     player.autoplay=true;
@@ -1816,7 +1859,7 @@ $("#add-channel-form").addEventListener("submit", async event => {
 $("#media-editor").addEventListener("submit", saveEditor);
 $("#close-editor").addEventListener("click", () => $("#editor-dialog").close());
 $("#editor-dialog").addEventListener("close", () => { state.editing = null; });
-$("#edit-type").addEventListener("change", () => { $("#break-editor").hidden = $("#edit-type").value === "advert"; });
+$("#edit-type").addEventListener("change", () => { $("#break-editor").hidden = $("#edit-type").value !== "programme"; });
 $("#add-genre").addEventListener("click", () => {
   const genre = $("#new-genre").value.trim();
   if (!genre) return;

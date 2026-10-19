@@ -41,7 +41,7 @@
       if (channel) { add([channel],suggestedChannels); reasons.push(`Channel matches genre: ${genre}`); }
     }
     suggestedGenres = list(suggestedGenres.map(genre => (catalog.genres || []).find(existing => normal(existing) === normal(genre)) || genre));
-    return {id:video.id, type:video.type || "programme", title:video.title || "", genres:genres.length ? genres : suggestedGenres,
+    return {id:video.id, type:video.type || "programme", bumper_role:video.bumper_role || "to_ads", title:video.title || "", genres:genres.length ? genres : suggestedGenres,
       channels:channels.length ? channels : suggestedChannels,
       description:video.description || "", tags:list(video.tags), tagline:video.tagline || "", tagline_goblin:video.tagline_goblin || "",
       reasons:reasons.length ? list(reasons) : ["No confident match — choose labels manually"], selected:false};
@@ -102,8 +102,11 @@
       if(record.fingerprint && record.fingerprint !== video.fingerprint) { skipped.push(`Row ${index+1}: video content changed or belongs to another library`); return; }
       if(seen.has(video.id)) { skipped.push(`Row ${index+1}: repeated ID #${video.id}`); return; }
       seen.add(video.id);
-      if (Object.hasOwn(record,"type") && record.type !== "" && !["programme","advert"].includes(record.type)) {
-        skipped.push(`Row ${index+1}: type must be programme or advert`); return;
+      if (Object.hasOwn(record,"type") && record.type !== "" && !["programme","advert","bumper"].includes(record.type)) {
+        skipped.push(`Row ${index+1}: type must be programme, advert or bumper`); return;
+      }
+      if (record.bumper_role && !["to_ads","from_ads","both"].includes(record.bumper_role)) {
+        skipped.push(`Row ${index+1}: bumper_role must be to_ads, from_ads or both`); return;
       }
       let confidence = null;
       if (record.confidence !== undefined && record.confidence !== null && record.confidence !== "") {
@@ -127,19 +130,20 @@
       if (confidence !== null) reasons.push(`Model confidence: ${Math.round(confidence*100)}% (self-reported)`);
       if(record.evidence) reasons.push(String(record.evidence).slice(0,2000));
       reasons.push(...uncertainties);
-      const suggestion={id:video.id, type:video.type || "programme", title:video.title || "", genres:list(video.genres),channels:list(video.channels),
+      const suggestion={id:video.id, type:video.type || "programme", bumper_role:video.bumper_role || "to_ads", title:video.title || "", genres:list(video.genres),channels:list(video.channels),
         description:video.description || "", tags:list(video.tags), tagline:video.tagline || "", tagline_goblin:video.tagline_goblin || "",evidence:String(record.evidence || "").slice(0,2000),uncertainties,confidence,reasons,selected:false};
       if(record.type) suggestion.type=record.type;
+      if (record.bumper_role) suggestion.bumper_role = record.bumper_role;
       if(Object.hasOwn(record,"title")) suggestion.title=String(record.title || "").trim().slice(0,300);
       for(const [field,limit] of [["description",1000],["tagline",300],["tagline_goblin",300]]) if(Object.hasOwn(record,field)) suggestion[field]=String(record[field] || "").trim().slice(0,limit);
       for(const field of ["genres","channels","tags"]) if(Object.hasOwn(record,field)) suggestion[field]=list(record[field]);
       if(mode!=='replace') {
         const kept=[];
-        for(const field of ['type','title','genres','channels','tags','description','tagline','tagline_goblin']) {
+        for(const field of ['type','bumper_role','title','genres','channels','tags','description','tagline','tagline_goblin']) {
           const array=['genres','channels','tags'].includes(field);
           const current=array?list(video[field]):String(video[field]||'').trim();
           // Empty advert channels intentionally mean all channels, not missing data.
-          const assigned=(array?current.length>0:current.length>0)||(field==='channels'&&video.type==='advert')
+          const assigned=(array?current.length>0:current.length>0)||(field==='channels'&&['advert','bumper'].includes(video.type))
             || options.protectedFields?.[video.id]?.includes(field);
           if(assigned && Object.hasOwn(record,field)) {
             if(JSON.stringify(suggestion[field])!==JSON.stringify(current)) kept.push(field);
@@ -157,10 +161,10 @@
   }
   const csvCell=value=>'"'+String(value ?? "").replace(/"/g,'""')+'"';
   function exportCsv(rows,catalog) {
-    const headers = ["id","file","fingerprint","type","title","genres","channels","description","tags","tagline","tagline_goblin","evidence","uncertainties","confidence"];
+    const headers = ["id","file","fingerprint","type","bumper_role","title","genres","channels","description","tags","tagline","tagline_goblin","evidence","uncertainties","confidence"];
     return [headers.join(","),...rows.map(row=> {
       const video = catalog.videos.find(video=>video.id===row.id);
-      return [row.id,video?.file,video?.fingerprint,row.type || video?.type || "programme",row.title,
+      return [row.id,video?.file,video?.fingerprint,row.type || video?.type || "programme",row.bumper_role || video?.bumper_role || "to_ads",row.title,
         row.genres.join("; "),row.channels.join("; "),row.description,(row.tags||[]).join("; "),row.tagline,row.tagline_goblin,
         row.evidence || "",JSON.stringify(row.uncertainties || []),row.confidence ?? ""].map(csvCell).join(",");
     })].join("\r\n");
@@ -189,7 +193,7 @@
       if (filters.type && video.type!==filters.type) return false;
       if (filters.enabled==='enabled' && video.enabled===false || filters.enabled==='disabled' && video.enabled!==false) return false;
       if (filters.channel && (filters.channel==='Interdimensional Customs'
-        ? video.type==='advert'||(video.channels||[]).some(c=>c!=='Interdimensional Customs')
+        ? ['advert','bumper'].includes(video.type)||(video.channels||[]).some(c=>c!=='Interdimensional Customs')
         : !(video.channels||[]).some(c=>lower(c)===lower(filters.channel)))) return false;
       if (filters.genre && !(video.genres||[]).some(g=>lower(g)===lower(filters.genre))) return false;
       const actualTags=(video.tags||[]).map(lower);
@@ -197,7 +201,7 @@
       const status=filters.status;
       if (status==='no-title' && lower(video.title) || status==='no-description' && lower(video.description)
         || status==='no-tags' && video.tags?.length || status==='no-genres' && video.genres?.length
-        || status==='no-channels' && (video.type==='advert'||video.channels?.length)
+        || status==='no-channels' && (['advert','bumper'].includes(video.type)||video.channels?.length)
         || status==='unknown-length' && measured
         || status==='episode-review' && (!(duration>3000)||['single','multiple'].includes(video.episode_review))
         || status==='multiple-episodes' && video.episode_review!=='multiple') return false;
@@ -231,7 +235,7 @@
       else if(mode==='replace') result[field]=values;
       else result[field]=[...existing,...values.filter(v=>!existing.some(item=>lower(item)===lower(v)))];
     }
-    if (['programme','advert'].includes(assignments.type)) result.type=assignments.type;
+    if (['programme','advert','bumper'].includes(assignments.type)) result.type=assignments.type;
     if (['enabled','disabled'].includes(assignments.enabled)) result.enabled=assignments.enabled==='enabled';
     return result;
   }

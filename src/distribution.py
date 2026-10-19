@@ -1,6 +1,10 @@
 """Shared lists for the server, native builders and portable update packages."""
 ASSETS = {"index.html", "style.css", "effects.css", "themes.css", "library.css",
-          "intro.css", "intro.js", "crt.js", "audio.js", "app.js", "schedule.js", "schedule-plans.js", "suggestions.js", "favicon.ico"}
+          "goblin-cabinet.png",
+          "goblin-stone-shelf.png",
+          "goblin-station-logo.png", "goblin-tonight-banner.png", "goblin-guide-tablet.png", "goblin-library-ledger.png",
+          "goblin-cabinet-tv.png", "goblin-document.png", "goblin-scroll-1.png", "goblin-scroll-2.png", "goblin-scroll-3.png", "caveat.ttf", "caveat-license.txt",
+          "intro.css", "intro.js", "crt.js", "audio.js", "transitions.js", "app.js", "schedule.js", "schedule-plans.js", "suggestions.js", "favicon.ico", "goblin.css", "goblin.js", "goblin-cave.jpg", "goblin-moss.png", "goblin-plank.webp", "goblin-preview-growth.webp", "grenze-gotisch.ttf", "skranji-regular.ttf", "grenze-license.txt", "skranji-license.txt"}
 TARGET_APPS = {
     "darwin-arm64": "Apps/darwin-arm64/USBtv",
     "linux-x64": "Apps/linux-x64/USBtv",

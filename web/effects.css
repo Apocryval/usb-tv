@@ -110,7 +110,10 @@ video.crt-shader-source {opacity:0}
 #channel-osd strong {display:block;font-size:clamp(32px,5vw,58px);font-variant-numeric:tabular-nums;letter-spacing:.02em;line-height:1.05;padding:15px 18px;text-align:center}
 #channel-osd span {display:block;font-size:clamp(15px,2.3vw,24px);font-weight:700;line-height:1.2;padding:14px 20px;overflow-wrap:anywhere;min-width:0}
 #channel-osd::before {grid-column:1 / -1;font-size:10px;letter-spacing:.18em;line-height:1.3;padding:8px 18px}
-#player-dialog #channel-osd {position:absolute;bottom:clamp(86px,16%,140px)}
+#player-dialog #channel-osd {position:absolute;left:4%;top:auto;bottom:clamp(24px,8%,64px);width:min(360px,72%);max-width:calc(100% - 32px);container-type:inline-size}
+#player-dialog #channel-osd strong {font-size:clamp(25px,10cqw,38px);padding:10px 12px}
+#player-dialog #channel-osd span {font-size:clamp(16px,6cqw,22px);padding:10px 12px}
+#player-dialog #channel-osd::before {font-size:9px;padding:7px 14px}
 #player-dialog #channel-up, #player-dialog #channel-down {font:12px var(--mono);border:1px solid var(--line);padding:7px 9px;border-radius:3px;color:var(--text)}
 #player-dialog .player-actions [hidden] {display:none}
 .playback-controls button[hidden] {display:none}
@@ -144,6 +147,10 @@ video.crt-shader-source {opacity:0}
 #admin-playback-controls[hidden] {display:none}
 #admin-playback-controls button {border-color:var(--lime);color:var(--lime)}
 #admin-playback-controls small {font:9px var(--mono);color:var(--muted)}
+#call-network {background:#b62332;color:#fff;border:1px solid #f36b78;font-weight:bold}
+#call-network:hover:not(:disabled) {background:#d33041}
+#call-network:focus-visible {outline:2px solid #fff;outline-offset:3px}
+#call-network:disabled {opacity:.5;cursor:wait}
 #playback-time {margin-left:auto}
 #player-dialog.video-fills-screen .player-top {position:absolute;z-index:3;top:0;left:0;right:0;height:58px;background:linear-gradient(#000d,#0009,transparent);box-sizing:border-box}
 #player-dialog.video-fills-screen .playback-controls {position:absolute;z-index:3;bottom:0;left:0;right:0;background:linear-gradient(transparent,#000d)}
@@ -216,3 +223,8 @@ video.crt-shader-source {opacity:0}
 .player-levelling-option input {accent-color:var(--lime)}
 
 .player-levelling-option select {font:inherit;max-width:150px;color:var(--text);background:var(--panel);border:1px solid var(--line);padding:6px}
+
+#tuning-static { position:absolute; inset:0; width:100%; height:100%; z-index:19; pointer-events:none; image-rendering:pixelated; }
+#tuning-static[hidden] { display:none; }
+
+#edit-bumper-options[hidden], #quick-label-bumper-options[hidden] { display:none!important; }

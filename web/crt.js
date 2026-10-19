@@ -28,9 +28,15 @@
       vec3 glow = (sampleAt(q + vec2(pixel.x*2.,0.)) + sampleAt(q - vec2(pixel.x*2.,0.))
                  + sampleAt(q + vec2(0.,pixel.y*1.5)) + sampleAt(q - vec2(0.,pixel.y*1.5))) * .25;
       vec3 color = sharp * .88 + glow * .20;
-      float scan = .88 + .12 * cos(q.y * min(videoSize.y, 480.) * 6.283185);
+      // Keep at least three rendered pixels per scanline cycle. Small previews
+      // cannot resolve the source's full line count without aliasing.
+      vec2 pictureSize = resolution * fit;
+      float lines = min(min(videoSize.y, 480.), pictureSize.y / 3.);
+      float detail = smoothstep(180., 600., pictureSize.y);
+      float scan = .88 + mix(.025, .12, detail) * cos(q.y * lines * 6.283185);
       float column = mod(floor(gl_FragCoord.x), 3.);
       vec3 mask = column < 1. ? vec3(1.,.82,.82) : column < 2. ? vec3(.82,1.,.82) : vec3(.82,.82,1.);
+      mask = mix(vec3(.88), mask, smoothstep(240., 900., pictureSize.x));
       float vignette = 1. - .24 * pow(length(p) / 1.4142, 2.);
       float grain = fract(sin(dot(floor(q * resolution),vec2(12.9898,78.233)) + clock) * 437.);
       color = pow(max(color, vec3(0.)), vec3(.96)) * scan * mask * vignette * 1.12;
@@ -40,8 +46,10 @@
   let enabled = false, frame = 0, last = 0;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const displays = [...document.querySelectorAll('#player, #guide-preview-video')].map(video => ({video}));
+  const overlay = document.querySelector('#crt-overlay');
 
   function clear(display) {
+    if (display.video.id === 'guide-preview-video' && overlay) overlay.style.clipPath = '';
     display.canvas?.classList.remove('crt-rendering');
     display.video.classList.remove('crt-shader-source');
   }
@@ -110,6 +118,12 @@
       gl.uniform1f(uniforms.clock,reducedMotion.matches ? 0 : Math.floor(now / 80) % 1000);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
       canvas.classList.add('crt-rendering'); video.classList.add('crt-shader-source');
+      if (video.id === 'guide-preview-video' && overlay) {
+        // Cut the shader-rendered picture out of the page-wide CSS pass. The
+        // rest of the interface retains its CRT treatment, including the cabinet.
+        const {left:x,top:y,right:r,bottom:b} = bounds;
+        overlay.style.clipPath = `polygon(evenodd, 0px 0px, ${innerWidth}px 0px, ${innerWidth}px ${innerHeight}px, 0px ${innerHeight}px, 0px 0px, ${x}px ${y}px, ${x}px ${b}px, ${r}px ${b}px, ${r}px ${y}px, ${x}px ${y}px)`;
+      }
     } catch (_) {
       display.failed = true; clear(display); // CSS CRT remains usable on unsupported GPUs/codecs.
     }

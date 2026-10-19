@@ -14,6 +14,7 @@ import secrets
 import hmac
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 import zipfile
@@ -89,8 +90,26 @@ class ScanJobs:
 
     def persist(self):
         temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(self.state,ensure_ascii=False),encoding="utf-8")
-        temporary.replace(self.path)
+        # Windows readers/security scanners can briefly deny atomic replacement.
+        # This is a progress checkpoint, not the catalogue: retain live progress
+        # and continue scanning if its file remains locked.
+        for attempt in range(5):
+            try:
+                checkpoint = {key:value for key,value in self.state.items() if key != "checkpoint_warning"}
+                temporary.write_text(json.dumps(checkpoint,ensure_ascii=False),encoding="utf-8")
+                temporary.replace(self.path)
+                self.state.pop("checkpoint_warning", None)
+                return
+            except PermissionError as error:
+                if attempt < 4:
+                    time.sleep(.025 * (2 ** attempt))
+                    continue
+                warning = f"Scan progress checkpoint is locked; scanning continues: {error}"
+                if "checkpoint_warning" not in self.state:
+                    if ERROR_LOGGER:
+                        ERROR_LOGGER.warning(warning)
+                    print(warning, file=sys.stderr, flush=True)
+                self.state["checkpoint_warning"] = warning
 
     def start(self):
         with self.lock:
@@ -390,6 +409,15 @@ class Handler(SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
+def startup_message(url):
+    return (f"USB.tv is running at {url}\n"
+            "Keep this terminal open while watching. Closing the browser does not stop the server.\n\n"
+            "BEFORE DISCONNECTING THE USB DRIVE:\n"
+            "  1. Finish any copies, imports or scans.\n"
+            "  2. Press Ctrl+C here and wait for 'USB.tv server stopped'.\n"
+            "  3. Eject / Safely Remove the drive in your operating system, then unplug it.\n")
+
+
 def main():
     global LIBRARY, WEB_ROOT, SESSION, SCANS
     parser = argparse.ArgumentParser(description="USB.tv local library")
@@ -418,7 +446,7 @@ def main():
                 SESSION.publish(server.server_port)
                 SCANS.start()
                 url = f"http://127.0.0.1:{server.server_port}/"
-                print(f"USB.tv is running at {url}\nKeep this window open. Press Ctrl+C to stop.", flush=True)
+                print(startup_message(url), flush=True)
                 if not options.no_browser:
                     browser_timer = threading.Timer(0.8, lambda: webbrowser.open(url))
                     browser_timer.daemon = True
@@ -428,8 +456,9 @@ def main():
                 server.stopping.set()
                 SCANS.close()
                 server.server_close()
+                print("USB.tv server stopped. Eject the drive safely before unplugging it.", flush=True)
     except KeyboardInterrupt:
-        print("\nUSB.tv stopped.")
+        pass
     except (OSError, RuntimeError) as error:
         parser.exit(1, f"USB.tv could not start: {error}\n")
 

@@ -19,6 +19,8 @@ def application_file(name):
     parts = PurePosixPath(name).parts
     if not parts or "/".join(parts) != name or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.\-]*", part) or part in (".", "..") or part.endswith((" ", ".")) for part in parts):
         return False
+    if len(parts) == 2 and parts[0] == "web" and name in UPDATE_FILES:
+        return True  # Explicitly bundled theme artwork, fonts and licences.
     if len(parts) == 1:
         return (PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"}
                 or name in {"requirements-build.txt", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",

@@ -191,7 +191,7 @@ class Catalogue:
             original = {item["id"]: item for item in baseline["videos"] if "id" in item}
             original_files = {item.get("file"): item for item in baseline["videos"]}
             editable = ("title", "genres", "channels", "tags", "description", "tagline", "tagline_goblin",
-                        "enabled", "type", "break_points", "breaks_approved", "duration", "episode_review", "episodes")
+                        "enabled", "type", "bumper_role", "break_points", "breaks_approved", "duration", "episode_review", "episodes")
             result = []
             for scanned in candidate["videos"]:
                 item = dict(scanned)
@@ -299,7 +299,7 @@ class Catalogue:
                 saved = {item["id"]: item for item in merged["videos"]}
                 for item in old + updated:
                     current = saved.get(item["id"], {})
-                    for key in ("title", "genres", "channels", "tags", "description", "tagline", "tagline_goblin", "enabled", "type", "break_points", "breaks_approved", "duration", "episode_review", "episodes"):
+                    for key in ("title", "genres", "channels", "tags", "description", "tagline", "tagline_goblin", "enabled", "type", "bumper_role", "break_points", "breaks_approved", "duration", "episode_review", "episodes"):
                         if key in current:
                             item[key] = current[key]
                 baseline.clear()
@@ -531,7 +531,9 @@ class Catalogue:
                     item[key] = strings(edit.get(key, item.get(key, [])))
                 item["channels"] = [name for name in item["channels"] if name != CUSTOMS_CHANNEL]
                 item["genre"] = ", ".join(item["genres"])
-                item["type"] = "advert" if edit.get("type", item.get("type")) == "advert" else "programme"
+                item["type"] = edit.get("type", item.get("type")) if edit.get("type", item.get("type")) in ("advert", "bumper") else "programme"
+                if item["type"] == "bumper":
+                    item["bumper_role"] = edit.get("bumper_role", item.get("bumper_role")) if edit.get("bumper_role", item.get("bumper_role")) in ("from_ads", "both") else "to_ads"
                 item["enabled"] = bool(edit.get("enabled", item.get("enabled", True)))
                 # Browser probing is a fallback for formats the built-in reader cannot inspect.
                 if not number(item.get("duration")) and number(edit.get("duration")) > 0:

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const S = require('../web/schedule.js');
-const context = {USBTvSchedule:S,structuredClone};
+const context = {USBTvSchedule:S,structuredClone,crypto:require('node:crypto').webcrypto};
 vm.runInNewContext(fs.readFileSync(require.resolve('../web/schedule-plans.js'),'utf8'),context);
 const P = context.USBTvPlans;
 const video = {id:'000001',file:'Videos/season.mp4',title:'Season',fingerprint:'same',duration:3600,
@@ -60,4 +60,42 @@ test('admin skip ends the selected episode and lands on the next episode offset'
   const current=S.locate(S.build({...catalog,broadcasts:updated},'A'),now);
   assert.equal(current.block.video.title,'Second');
   assert(Math.abs(current.position-1600)<.01);
+});
+
+test('version 4 shuffles individual episodes with other programmes and retains source offsets',()=>{
+  const season={...video,duration:800,break_points:[],episodes:Array.from({length:8},(_,i)=>({title:`Episode ${i}`,start:i*100,end:(i+1)*100}))};
+  const other={id:'other',type:'programme',channels:['A'],duration:100};
+  const c={...catalog,videos:[season,other]};
+  const line=S.buildCycle(c,'A','episode-test',0,4);
+  const expected=S.shuffled(c.videos.flatMap(S.episodeProgrammes),'episode-test');
+  assert.deepEqual(line.blocks.map(b=>[b.video.id,b.video.episode_index]),expected.map(v=>[v.id,v.episode_index]));
+  assert.equal(line.blocks.length,9);
+  assert.equal(line.duration,900);
+  assert.equal(new Set(line.blocks.map(b=>`${b.video.id}:${b.video.episode_index}`)).size,9);
+  assert.notDeepEqual(line.blocks.filter(b=>b.video.id===season.id).map(b=>b.video.episode_index),[0,1,2,3,4,5,6,7]);
+  const otherIndex=line.blocks.findIndex(b=>b.video.id==='other');
+  assert(otherIndex>0 && otherIndex<line.blocks.length-1);
+  for(const block of line.blocks.filter(b=>b.video.id===season.id)) {
+    const located=S.locate(line,block.start*1000+1000);
+    assert.equal(located.position,block.video.episode_index*100+1);
+    assert.equal(located.segment.video.file,season.file);
+  }
+  assert.deepEqual(S.buildCycle(c,'A','episode-test',0,4),line);
+});
+
+test('episode shuffle upgrade preserves frozen clocks until a queued boundary or explicit reshuffle',()=>{
+  const now=S.ANCHOR+100000;
+  const stored=P.reconcile(catalog,{},now);
+  stored.A.active.schedule_version=3;
+  const original=JSON.stringify(stored.A.active);
+  const before=S.locate(S.build({...catalog,broadcasts:stored},'A'),now);
+  const updated=P.reconcile(catalog,stored,now);
+  assert.equal(JSON.stringify(updated.A.active),original);
+  assert.equal(updated.A.pending.schedule_version,4);
+  assert.equal(S.locate(S.build({...catalog,broadcasts:updated},'A'),now).position,before.position);
+  const shuffled=P.reshuffle(catalog,updated,'A',now);
+  assert.equal(shuffled.A.active.schedule_version,4);
+  assert.equal(shuffled.A.active.anchor,now);
+  assert.equal(shuffled.A.pending,null);
+  assert.equal(JSON.stringify(P.reconcile(catalog,JSON.parse(JSON.stringify(shuffled)),now+1)),JSON.stringify(shuffled));
 });

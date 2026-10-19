@@ -72,3 +72,5 @@ only after all three builds are present and their source stamps match.
 - [Metadata Studio](metadata-studio/README.md)
 - [Classification workflow](docs/workflow/README.md)
 - [Development handoff and history](docs/PROJECT-HANDOFF.md)
+
+For Windows development, double-click **Start USB.tv Development.bat** to run current source with the local Python environment (or installed Python 3). This avoids repeatedly packaging unsigned executables during development. **Start USB.tv.bat** remains the portable native-app launcher.

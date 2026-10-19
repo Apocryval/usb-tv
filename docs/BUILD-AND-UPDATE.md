@@ -92,3 +92,12 @@ If you put the source in a GitHub repository, choose **Actions → Build USB.tv 
 ## Reorganised layout and older installations
 
 The format-2 installer now accepts application files under `src/`, `web/`, `scripts/` and `docs/`. Personal `data/*.json` files are never update payloads; only the empty `data/.gitkeep` marker is shipped. Startup migrates old root-level saved state after acquiring the library session lock. An older updater may reject these new application paths: install the legacy bridge first, then the complete ZIP, before launching. The bridge contract stays frozen; its old names are mapped onto the new source layout when packaging. No update has been applied to the existing production USB.
+
+
+### Windows development launcher
+
+Use `Start USB.tv Development.bat` in the development checkout. It explicitly runs `src/server.py` with `.local/venv/Scripts/python.exe`, falling back to installed Python 3 if that environment is absent. It uses the same library root, catalogue and launch reminders as the native app. It does not execute the bundled EXE or change Windows security settings. Keep its terminal open and use Ctrl+C before ejecting a drive. This development-only launcher is not part of the portable update bundle. For distributing the native EXE on Smart App Control devices, use a code-signing certificate from a trusted provider; self-signing does not satisfy Smart App Control public trust.
+
+### Refreshing development assets
+
+Edits to existing CSS and JavaScript can be loaded with Ctrl+F5. Adding new artwork, fonts or other entries to `src/distribution.py` requires restarting **Start USB.tv Development.bat**, because the server loads its asset allowlist at startup. Use the new browser URL opened by the launcher; its local port may differ from the previous session. A browser refresh alone cannot update a running Python server's allowlist. The native executable remains separate and is not updated by source edits.

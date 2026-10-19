@@ -20,12 +20,18 @@
       episode_index:index, source_offset:episode.start, duration:episode.end - episode.start,
       break_points:(video.break_points || []).filter(point => point > episode.start && point < episode.end).map(point => point - episode.start)}));
   }
-  function buildCycle(catalog, channelName, seed = channelName, anchor = ANCHOR, scheduleVersion = 2) {
+  function buildCycle(catalog, channelName, seed = channelName, anchor = ANCHOR, scheduleVersion = 4) {
     const channel = (catalog.channels || []).find((item) => item.name === channelName) || {};
     const interval = Number(channel.ad_interval ?? catalog.settings?.ad_interval ?? 900);
     const target = Number(channel.ad_length ?? catalog.settings?.ad_length ?? 90);
-    const programmes = shuffled(catalog.videos.filter((item) => validMedia(item) && item.type !== "advert" && item.channels.includes(channelName)), seed).flatMap(episodeProgrammes);
+    const files = catalog.videos.filter((item) => validMedia(item) && !["advert", "bumper"].includes(item.type) && item.channels.includes(channelName));
+    // Expand before shuffling so reviewed episodes are independent programmes.
+    // Frozen older clocks retain their original file-level order until reshuffled.
+    const programmes = scheduleVersion >= 4 ? shuffled(files.flatMap(episodeProgrammes), seed)
+      : shuffled(files, seed).flatMap(episodeProgrammes);
     const adverts = shuffled(catalog.videos.filter((item) => validMedia(item) && item.type === "advert" && (!item.channels.length || item.channels.includes(channelName))), seed + ":adverts");
+    const bumpers = scheduleVersion >= 3 ? shuffled(catalog.videos.filter(item => validMedia(item) && item.type === "bumper" && (!item.channels.length || item.channels.includes(channelName))), seed + ":bumpers") : [];
+    const bumperIndex = {to_ads:0, from_ads:0};
     let adIndex = 0, sinceBreak = 0, cursor = 0, previousAd = null, firstAd = null;
     const blocks = [];
     const programmeSeconds = programmes.reduce((sum, video) => sum + Number(video.duration), 0);
@@ -38,11 +44,15 @@
       const block = { video, index, start: cursor, segments: [] };
       function append(media, offset, duration, advert = false) {
         if (duration <= 0) return;
-        block.segments.push({ video: media, offset, duration, start: cursor, advert, key: `${index}:${block.segments.length}` });
+        block.segments.push({ video: media, offset, duration, start: cursor, advert, ...(media.type === "bumper" ? {bumper:true, bumper_role:media.bumper_role || "to_ads"} : {}), key: `${index}:${block.segments.length}` });
         cursor += duration;
       }
       function breakNow() {
         if (!adverts.length || target <= 0) return;
+        function bumper(role) {
+          const choices = bumpers.filter(item => ((item.bumper_role || "to_ads") === role || item.bumper_role === "both"));
+          if (choices.length) { const clip = choices[bumperIndex[role]++ % choices.length]; append(clip, 0, Number(clip.duration)); }
+        }
         let length = 0;
         const used = new Set();
         while (length < target && used.size < adverts.length) {
@@ -55,12 +65,14 @@
             break;
           }
           if (!candidate) break;
+          if (!used.size) bumper("to_ads");
           append(candidate, 0, Number(candidate.duration), true);
           used.add(candidate.id);
           previousAd = candidate.id;
           if (firstAd === null) firstAd = candidate.id;
           length += Number(candidate.duration);
         }
+        if (used.size) bumper("from_ads");
         sinceBreak = 0;
       }
       const points = video.breaks_approved ? [...new Set((video.break_points || []).map(Number).filter((point) => point > 0 && point < Number(video.duration)))].sort((a, b) => a - b) : [];
@@ -81,7 +93,7 @@
     const plan = catalog.broadcasts && Object.hasOwn(catalog.broadcasts,channelName) ? catalog.broadcasts[channelName] : null;
     if (!plan) {
       if (channelName === "Interdimensional Customs") {
-        const videos = catalog.videos.filter(video=>video.type !== "advert" && !video.channels.filter(name=>name!==channelName).length).map(video=>({...video,channels:[channelName]}));
+        const videos = catalog.videos.filter(video=>!["advert", "bumper"].includes(video.type) && !video.channels.filter(name=>name!==channelName).length).map(video=>({...video,channels:[channelName]}));
         return buildCycle({...catalog,videos,channels:[{name:channelName,ad_length:0}]},channelName);
       }
       return buildCycle(catalog, channelName);

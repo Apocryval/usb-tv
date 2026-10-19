@@ -28,8 +28,11 @@ test('replay navigation treats internal adverts as part of their programme and h
   assert.equal(restarted.segment.advert,false);
   assert(Math.abs(restarted.position-(restarted.block.video.source_offset+.0005))<.000001);
   const prev=S.locate(line,S.browseProgramme(line,at,'previous',at));
-  assert.equal(prev.block.video.episode_index,0);
-  assert.equal(current.block.video.episode_index,1);
+  assert.equal(prev.block.index,0);
+  assert.equal(current.block.index,1);
+  assert.notEqual(prev.block.video.episode_index,current.block.video.episode_index);
+  assert.equal(prev.end,current.start);
+  assert(Math.abs(prev.position-(prev.block.video.source_offset+.0005))<.000001);
 });
 
 test('previous crosses a pending lineup boundary using the earlier broadcast rotation',()=>{
@@ -53,7 +56,7 @@ test('replay follows its own segment cursor through loading delays and rejoins l
   const context={state:{playback,catalog},Schedule:S,$:get,Date:{now:()=>clock},
     tuneChannel(name){assert.equal(name,'A');joined++;},window:{},displayTitle:v=>v.id,
     videoUrl:f=>f,seekToLive(pos,player){player.currentTime=pos;},updatePlaybackControls(){},showToast(){}};
-  vm.runInNewContext(source.slice(source.indexOf('function returnToLive()'),source.indexOf("$('#programme-previous').addEventListener")),context);
+  vm.runInNewContext(source.slice(source.indexOf('function returnToLive('),source.indexOf("$('#programme-previous').addEventListener")),context);
   context.loadChannelReplay();clock+=50000;get('#player').onloadedmetadata();
   assert.equal(playback.loaded,true);assert.equal(joined,0);
   assert.equal(get('#player').currentTime,S.locate(line,500000).position);
@@ -69,7 +72,7 @@ test('loading paused replay disables native autoplay and stays paused after meta
   const line=S.buildCycle(catalog,'A','fixed',0),playback={mode:'replay',channel:'A',line,cursor:500000};
   const context={state:{playback,catalog},Schedule:S,$:get,Date:{now:()=>610000},window:{},displayTitle:v=>v.id,
     videoUrl:f=>f,seekToLive(pos,player){player.currentTime=pos;},updatePlaybackControls(){},revealPlayerControls(){}};
-  vm.runInNewContext(source.slice(source.indexOf('function returnToLive()'),source.indexOf("$('#programme-previous').addEventListener")),context);
+  vm.runInNewContext(source.slice(source.indexOf('function returnToLive('),source.indexOf("$('#programme-previous').addEventListener")),context);
   context.loadChannelReplay(false);assert.equal(get('#player').autoplay,false);
   get('#player').onloadedmetadata();assert.equal(get('#player').paused,true);
 });
@@ -81,7 +84,7 @@ test('seeking again before metadata loads honours the latest position and autopl
   const context={state:{playback,catalog},Schedule:S,$:get,Date:{now:()=>610000},window:{},displayTitle:v=>v.id,
     videoUrl:f=>f,seekToLive(pos,player){player.currentTime=pos;},updatePlaybackControls(){},revealPlayerControls(){}};
   vm.runInNewContext(source.slice(source.indexOf('function playerProgress()'),source.indexOf('$("#playback-toggle").addEventListener'))+
-    source.slice(source.indexOf('function returnToLive()'),source.indexOf("$('#programme-previous').addEventListener")),context);
+    source.slice(source.indexOf('function returnToLive('),source.indexOf("$('#programme-previous').addEventListener")),context);
   context.loadChannelReplay(true);
   const original=playback.current.position;
   context.seekPlayback(original+10);

@@ -44,8 +44,10 @@ def validate(channels):
             if not isinstance(videos, list) or len(videos) > 20000:
                 raise ValueError("Invalid broadcast media list")
             for video in videos:
-                if not isinstance(video, dict) or not isinstance(video.get("id"), str) or not finite(video.get("duration"), .001) or video.get("channels") != [name] or video.get("type") not in ("programme", "advert"):
+                if not isinstance(video, dict) or not isinstance(video.get("id"), str) or not finite(video.get("duration"), .001) or video.get("channels") != [name] or video.get("type") not in ("programme", "advert", "bumper"):
                     raise ValueError("Invalid broadcast media")
+                if video.get("type") == "bumper" and video.get("bumper_role", "to_ads") not in ("to_ads", "from_ads", "both"):
+                    raise ValueError("Invalid broadcast bumper role")
                 if not isinstance(video.get("break_points"), list) or not all(finite(point) for point in video["break_points"]):
                     raise ValueError("Invalid broadcast break points")
                 normalise_episodes(video.get("episodes", []), video["duration"])

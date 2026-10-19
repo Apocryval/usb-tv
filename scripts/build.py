@@ -22,7 +22,7 @@ def source_digest():
         digest.update(name.encode("utf-8") + b"\0")
         # Normalise Git's possible Windows line-ending conversion.
         data = (ROOT / name).read_bytes()
-        if Path(name).suffix != ".ico":
+        if Path(name).suffix not in {".ico", ".webp", ".png", ".jpg", ".ttf", ".woff2"}:
             data = data.replace(b"\r\n", b"\n")
         digest.update(data + b"\0")
     return digest.hexdigest()

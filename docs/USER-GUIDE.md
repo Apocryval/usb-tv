@@ -56,10 +56,10 @@ In the guide, enable **Advanced mode** using the small sliders button, then choo
 In **Library & labels**, paste a full path into **Video folder on this computer** and choose **Use folder & rescan** to read programmes from another folder, including its subfolders. No videos are copied or moved. **Use default** restores the `Videos/` folder beside the app. Pause an active scan and wait for it to stop before changing folders. Adverts remain in `Adverts/`; catalogue and schedules remain beside the launchers. Folder choices are stored per computer in `video-folders.json` and survive restarts. External paths must be selected separately on Mac, Windows and Linux. If a selected drive is disconnected, scanning reports an error and retains saved labels. Switching folders replaces the programme source, rather than adding a second source; files absent from the new folder remain in the catalogue as missing. Avoid switching between unrelated collections with identical relative filenames, because labels follow those catalogue paths.
 
 - **Windows:** double-click `Start USB.tv.bat`.
-- **Linux Mint / Steam Deck:** open a terminal in the drive and run `sh ./start-usbtv.sh`. On Steam Deck, switch to Desktop Mode first.
+- **Linux Mint / Steam Deck:** switch to Desktop Mode on Steam Deck, then run `start-usbtv.sh`. When launched without a terminal, the launcher opens one automatically (preferring Konsole). You can also open a terminal in the drive and run `sh ./start-usbtv.sh`. Return to that terminal and press Ctrl+C to stop the session; wait for “USB.tv server stopped” before safely ejecting the drive. Closing the browser alone does not stop the server.
 - **Apple silicon Mac:** open `start-usbtv.command`. The current Mac build is not notarized, so Gatekeeper may require you to allow USB.tv in Privacy & Security on first launch.
 
-Keep the terminal open while using the guide; close it or press Ctrl+C to stop the local server. USB.tv binds only to the local computer and does not need internet access.
+Keep the terminal open while using the guide. The launch reminder explains how to disconnect safely: finish copies/imports/scans, press Ctrl+C in the server terminal, wait for "USB.tv server stopped", then eject the drive through the operating system before unplugging. Closing the browser alone does not stop the server. USB.tv binds only to the local computer and does not need internet access.
 
 Launching USB.tv again gracefully stops the previous server for that same library on this computer before opening the replacement. Existing writes finish first; if the old server is busy for more than 20 seconds, startup asks you to wait or close it rather than forcibly killing it. Different library folders can run independently. Session control uses a private local token and an OS lock in the user's cache; stale locks are released automatically when a process exits. Old browser tabs are not closed automatically—use the newly opened page. Builds made before this session feature need to be closed manually once.
 
@@ -224,7 +224,7 @@ While watching a channel (windowed, browser fullscreen or app fullscreen), type 
 
 The channel number/name tuning banner follows the saved theme: Satellite uses a glossy silver-and-blue digital-TV lower third, Teletext uses block colours and monospace lettering, and Goblin Cable uses a weathered wooden/metal plaque. The same styling applies to number entry and unavailable-channel messages, in windowed playback and fullscreen.
 
-Choose **LABELS** in the player to open a compact title, Programme/Advert type, genre, tag and channel editor without stopping live TV. It stays available in app fullscreen. During an advert break it edits the programme containing the break. The panel stays attached to the original programme if the broadcast advances while you are editing. Save writes labels to the portable catalogue; Cancel discards the panel's draft. Channel changing closes an unsaved draft. Use the full library editor for break points and other detailed fields.
+Choose **LABELS** in the player to open a compact title, Programme/Advert type, genre, tag and channel editor without stopping live TV. It stays available in app fullscreen. During an advert break it edits the advert actually on screen. The panel stays attached to the original file if the broadcast advances while you are editing. Save writes labels to the portable catalogue; Cancel discards the panel's draft. Channel changing closes an unsaved draft. Use the full library editor for break points and other detailed fields.
 
 **Interdimensional Customs** is an automatic channel containing enabled, present programmes with readable durations and no channel assignments. It is excluded from assignment checkboxes: you assign programmes to their destination channels, and Customs picks up anything remaining. Genres do not affect eligibility. Customs has no adverts so you can review programmes continuously. After assignments change, its current programme finishes, then the revised queue takes effect; assigned programmes cannot recur in that revised queue. If none remain, the player shows a cleared-queue message and you can change channel. The transition is saved in `broadcasts.json`, including across restarts. Ordinary channels retain their usual delayed lineup updates.
 
@@ -254,7 +254,7 @@ Settings include **Fullscreen while watching**. **Video fills the screen** (defa
 
 Programme files longer than 50 minutes appear in **Needs review** as **Possibly multi-episode**. Open **Edit → Episode review** (or **Review episodes** in bulk review). Choose **A single programme** to dismiss the flag for films and long programmes, or **Multiple episodes** to define sections without changing the media file.
 
-Enter an episode count and **Divide equally** for an initial guess, then adjust each title, start and end. **Preview start/end** opens the original video at that boundary (end previews begin five seconds earlier). Save labels when satisfied. Markers must be ordered, non-overlapping and within the file; gaps are skipped. Each episode inherits the video's channels, genres and loudness gain and appears as a separate guide programme. Episodes stay in order together within the channel's shuffled lineup. Existing broadcast loops adopt saved changes at their normal pending-lineup boundary; **Reshuffle now** applies them immediately. Ordinary short videos keep these controls collapsed. Changing back to a single programme retains saved markers for later use.
+Enter an episode count and **Divide equally** for an initial guess, then adjust each title, start and end. **Preview start/end** opens the original video at that boundary (end previews begin five seconds earlier). Save labels when satisfied. Markers must be ordered, non-overlapping and within the file; gaps are skipped. Each episode inherits the video's channels, genres and loudness gain and appears as a separate guide programme. New channel shuffles treat each reviewed episode as an independent programme, mixing episodes with other recordings. Saved older lineups retain their existing episode order until their scheduled update or an explicit reshuffle. Existing broadcast loops adopt saved changes at their normal pending-lineup boundary; **Reshuffle now** applies them immediately. Ordinary short videos keep these controls collapsed. Changing back to a single programme retains saved markers for later use.
 
 Episode metadata lives in the existing portable catalogue; no extra files, conversion or duplicated storage is needed. Native backends must be rebuilt for marker persistence.
 
@@ -263,3 +263,26 @@ Episode metadata lives in the existing portable catalogue; no extra files, conve
 Catalogue saves use revision checks and reject stale pages instead of silently overwriting newer labels or scan results. If a save reports a conflict, refresh and review the current library before retrying. Live playback recovers automatically at the next scheduled segment after a media error.
 
 Replacing or cutting down a recording at the same path retains its catalogue ID and labels, but clears its episode markers and returns episode review to unchecked. The previous markers and content fingerprint are retained in `previous_episode_metadata` for recovery; they are not used for playback. Browser writes require same-origin requests and a write token obtained automatically by the UI. Backend and UI must be updated together.
+
+
+### Call the network
+
+With Advanced mode enabled, live channel playback shows a red **CALL THE NETWORK** button. It skips the current programme/episode, or just the current advert during a break, and saves the selected channel’s new clock. Other channels are unchanged. It is separate from the Admin playback toggle and is not shown in replay, preview or Chaos. Finish or cancel open label edits before using it.
+
+
+### Bumpers and tuning static
+
+Put bumper videos in Videos, rescan, then edit their labels. Choose Type **Bumper** and position **Before advert break** or **After advert break**. Select allowed channels; no channel selections means every ordinary channel. Bumpers never enter the unassigned Customs queue. Metadata Studio skips labelled bumpers.
+
+Each actual advert break gets one eligible opening bumper and one closing bumper, if available. Multiple clips rotate deterministically. Bumpers play at their full length, outside the advert-length target, and count toward the guide's running time. No adverts means no bumpers. Existing saved lineups keep their timing until their scheduled update; use Reshuffle now to apply newly labelled bumpers immediately.
+
+Tuning and previous/next video navigation show 150 ms of locally generated static with a quiet noise burst. Sound follows the player volume and mute control; reduced-motion preferences use a still noise frame. Automatic programme/advert transitions remain clean. Scrubbing the progress bar and seeking with Left/Right produce no static. No static media file or network connection is needed.
+
+Bumper position **Before and after** makes a clip eligible for either side of the break. Each position has its own rotation through eligible clips in a repeatable shuffled order; only one bumper plays at each position. With a single Both clip it plays twice per break. With several clips, the opening and closing choices can be the same clip. Reshuffling the channel changes the order. The rotation repeats with the channel schedule.
+
+
+Goblin theme now includes bundled cave artwork, moss-covered channel plaques, Grenze Gotisch headings and Skranji programme text. Fonts and artwork work offline. Fourteen subtle fireflies drift around the edges; a cluster of 4–7 bats occasionally crosses the upper cave on varied paths after a random 45–90-second wait. Animation pauses when the page is hidden; reduced-motion mode keeps still fireflies and omits bats. Bats do not start while the intro or a dialog is open.
+
+Moss plaques use four transparent illustrated textures with stable channel-specific selection and mirroring, so guide refreshes retain each channel’s appearance. Bat clusters vary their curved paths, speed, size, wingbeats and staggered start times.
+
+Goblin mode uses illustrated weathered wooden channel signs beneath its moss overlays, an ivy-and-mushroom preview frame, and chunky bevelled guide/navigation buttons. Decorative artwork stays behind content and never intercepts clicks. These assets are bundled locally. Use Start USB.tv Development.bat to test current source on Windows.

@@ -57,6 +57,25 @@
   }
   window.USBTvAudio = {
     gainFor, unlock,
+    playStatic() {
+      if (!player || player.muted || player.volume <= 0) return;
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      try {
+        context ||= new AudioContext();
+        if (context.state === 'suspended') context.resume().catch(() => {});
+        const duration = .15, noise = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+        const samples = noise.getChannelData(0);
+        for (let i=0;i<samples.length;i++) samples[i]=Math.random()*2-1;
+        const source=context.createBufferSource(), gain=context.createGain(), now=context.currentTime;
+        source.buffer=noise; source.connect(gain); gain.connect(context.destination);
+        gain.gain.setValueAtTime(0,now);
+        gain.gain.linearRampToValueAtTime(.045*player.volume,now+.01);
+        gain.gain.linearRampToValueAtTime(0,now+duration);
+        source.onended=()=>{source.disconnect();gain.disconnect();};
+        source.start(now); source.stop(now+duration);
+      } catch (_) { /* Unsupported audio must never prevent tuning. */ }
+    },
     setProfile(value) {
       profile = value === 'balanced' ? 'balanced' : 'standard';
       displays.forEach(display=>update(display));

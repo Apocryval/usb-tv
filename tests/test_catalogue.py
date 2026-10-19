@@ -44,6 +44,20 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(item['type'], 'advert')
         self.assertEqual(item['channels'], [])
 
+    def test_bumper_role_survives_save_and_rescan(self):
+        (self.root / 'Videos' / 'bumper.mp4').write_bytes(mp4(duration=5))
+        data = self.catalog.scan()
+        data['videos'][0].update(type='bumper', bumper_role='from_ads', channels=[])
+        saved = self.catalog.save_edits(data)
+        self.assertEqual(saved['videos'][0]['type'], 'bumper')
+        self.assertEqual(saved['videos'][0]['bumper_role'], 'from_ads')
+        rescanned = self.catalog.scan()['videos'][0]
+        self.assertEqual(rescanned['type'], 'bumper')
+        self.assertEqual(rescanned['bumper_role'], 'from_ads')
+        data = self.catalog.read()
+        data['videos'][0]['bumper_role'] = 'both'
+        self.assertEqual(self.catalog.save_edits(data)['videos'][0]['bumper_role'], 'both')
+
     def test_identity_rename_duplicate_missing_and_edits(self):
         path = self.root / 'Videos' / 'one.mp4'
         path.write_bytes(mp4())

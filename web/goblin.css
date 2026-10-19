@@ -1,0 +1,497 @@
+@font-face {font-family:'Grenze Gotisch';src:url('grenze-gotisch.ttf') format('truetype');font-weight:100 900;font-display:swap}
+@font-face {font-family:'Skranji';src:url('skranji-regular.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face {font-family:'Caveat';src:url('caveat.ttf') format('truetype');font-weight:400 700;font-display:swap}
+body[data-theme="goblin"] {
+  --bg:#1b2015;--panel:#2c3021;--panel-2:#383b28;--line:#756a47;--muted:#c3c49e;--text:#f1e5c6;--lime:#c6d88b;--pink:#d7ba77;
+  --sans:'Skranji',system-ui,sans-serif;
+  background:#1b2015 url('goblin-cave.jpg') center center/cover fixed no-repeat;
+}
+body[data-theme="goblin"] .shell {position:relative;z-index:1}
+body[data-theme="goblin"] .brand-name,
+body[data-theme="goblin"] h1,body[data-theme="goblin"] h2,
+body[data-theme="goblin"] .channel-name {font-family:'Grenze Gotisch',Georgia,serif;font-style:normal;letter-spacing:.01em}
+body[data-theme="goblin"] .brand-name {font-size:34px}
+body[data-theme="goblin"] h1 {font-size:36px}
+body[data-theme="goblin"] .channel-name {font-size:21px;line-height:1.15}
+body[data-theme="goblin"] .programme-title,
+body[data-theme="goblin"] #preview-title,
+body[data-theme="goblin"] #preview-description,
+body[data-theme="goblin"] #player-title,
+body[data-theme="goblin"] .library-title {font-family:'Skranji',system-ui,sans-serif;font-weight:400}
+body[data-theme="goblin"] button,body[data-theme="goblin"] input,body[data-theme="goblin"] select,body[data-theme="goblin"] textarea,
+body[data-theme="goblin"] .settings-note,body[data-theme="goblin"] .channel-meta {font-family:system-ui,sans-serif}
+body[data-theme="goblin"] .channel-card {
+  position:relative;margin:12px 12px 12px 0;padding:18px 10px 12px;min-width:0;
+  background:linear-gradient(145deg,#655c40,#3b3d29);border:1px solid #88764f;border-radius:10px 6px 12px 7px;
+  box-shadow:inset 0 2px #b4a17030,0 4px 0 #151d10;
+}
+body[data-theme="goblin"] .channel-info {min-width:0}
+body[data-theme="goblin"] .programme {border-radius:5px;background:#303525;box-shadow:inset 0 1px #b0a47720}
+body[data-theme="goblin"] .programme.current {background:#485a30;color:#f5ebc7;border-color:#a3b967!important}
+body[data-theme="goblin"] .programme.current .programme-tag,
+body[data-theme="goblin"] .programme.current .programme-time {color:#e0e7b6}
+body[data-theme="goblin"] .guide-preview,body[data-theme="goblin"] .programme-details {background:#252b1d;border-color:#756a47}
+body[data-theme="goblin"] .startup-wordmark {font-family:'Grenze Gotisch',Georgia,serif}
+.goblin-atmosphere {display:none;position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:0}
+body[data-theme="goblin"] .goblin-atmosphere {display:block}
+.goblin-firefly {position:absolute;left:var(--x);top:var(--y);width:3px;height:3px;border-radius:50%;background:#e6efad;box-shadow:0 0 5px 2px #bddb7899,0 0 16px 5px #97b84c44;animation:goblin-drift var(--duration) ease-in-out infinite alternate,goblin-glow 5s ease-in-out infinite;animation-delay:var(--delay)}
+@keyframes goblin-drift {from{transform:translate(0,0)}to{transform:translate(18px,-35px)}}
+@keyframes goblin-glow {0%,100%{opacity:.2}50%{opacity:.85}}
+.goblin-bat {position:absolute;top:var(--height);left:0;width:44px;height:20px;opacity:.8;animation:goblin-cross 7s linear forwards;filter:drop-shadow(0 1px 1px #afa36c44)}
+.goblin-bat.reverse {animation-name:goblin-cross-back}
+.goblin-bat i {position:absolute;left:19px;top:7px;width:7px;height:12px;background:#10170f;clip-path:polygon(0 0,40% 25%,100% 0,85% 75%,50% 100%,10% 75%)}
+.goblin-bat span {position:absolute;top:1px;width:22px;height:16px;background:#10170f;clip-path:polygon(0 0,35% 15%,65% 5%,100% 65%,75% 65%,60% 100%,40% 65%,20% 90%);transform-origin:right center;animation:goblin-flap .22s ease-in-out infinite alternate}
+.goblin-bat span:last-child {left:22px;transform-origin:left center;clip-path:polygon(100% 0,65% 15%,35% 5%,0 65%,25% 65%,40% 100%,60% 65%,80% 90%)}
+@keyframes goblin-flap {to{transform:scaleY(.25)}}
+.goblin-atmosphere.paused * {animation-play-state:paused}
+@media(prefers-reduced-motion:reduce) {.goblin-firefly{animation:none;opacity:.45}.goblin-bat{display:none}}
+@media(max-width:760px) {body[data-theme="goblin"] .brand-name{font-size:27px}body[data-theme="goblin"] .channel-name{font-size:18px}body[data-theme="goblin"] .channel-card{gap:6px;padding-inline:6px}body[data-theme="goblin"] .channel-logo{display:none}}
+
+body[data-theme="goblin"] .channel-logo {display:none}
+body[data-theme="goblin"] .channel-name {white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+
+/* Keep the moss atlas available, but hide the overlay on the wooden signs for now. */
+body[data-theme="goblin"] .channel-card::before {
+  content:none;position:absolute;pointer-events:none;
+  top:-28px;left:-3px;right:-3px;height:54px;
+  background:url('goblin-moss.png') center var(--moss-y,0%)/100% 400% no-repeat;
+  filter:drop-shadow(0 2px 1px #12200a88);transform:scaleX(var(--moss-flip,1)) rotate(var(--moss-angle,0deg));
+}
+body[data-theme="goblin"] .channel-card::after {display:none}
+body[data-theme="goblin"] .channel-card[data-moss="1"] {--moss-y:33.333333%;--moss-angle:.35deg}
+body[data-theme="goblin"] .channel-card[data-moss="2"] {--moss-y:66.666667%;--moss-angle:-.4deg}
+body[data-theme="goblin"] .channel-card[data-moss="3"] {--moss-y:100%;--moss-angle:.2deg}
+.goblin-flock {position:absolute;inset:0;pointer-events:none}
+.goblin-bat {animation-duration:var(--flight,7s);animation-delay:var(--stagger,0s);animation-fill-mode:both}
+.goblin-bat span {animation-duration:var(--flap,.22s)}
+@keyframes goblin-cross {
+  0% {transform:translateX(-65px) translateY(0) rotate(0deg) scale(var(--size,1))}
+  25% {transform:translateX(22vw) translateY(var(--rise-a,-20px)) rotate(var(--tilt,5deg)) scale(var(--size,1))}
+  60% {transform:translateX(61vw) translateY(var(--rise-b,15px)) rotate(calc(-1 * var(--tilt,5deg))) scale(var(--size,1))}
+  100% {transform:translateX(calc(100vw + 65px)) translateY(5px) rotate(0deg) scale(var(--size,1))}
+}
+@keyframes goblin-cross-back {
+  0% {transform:translateX(calc(100vw + 65px)) translateY(0) rotate(0deg) scale(var(--size,1))}
+  25% {transform:translateX(78vw) translateY(var(--rise-a,-20px)) rotate(var(--tilt,5deg)) scale(var(--size,1))}
+  60% {transform:translateX(39vw) translateY(var(--rise-b,15px)) rotate(calc(-1 * var(--tilt,5deg))) scale(var(--size,1))}
+  100% {transform:translateX(-65px) translateY(5px) rotate(0deg) scale(var(--size,1))}
+}
+.goblin-bat {animation-timing-function:linear}
+
+body[data-theme="goblin"] .channel-card[data-moss-flip="1"] {--moss-flip:-1}
+
+/* An overgrown, hand-painted adventure-game interface. */
+body[data-theme="goblin"] .channel-card {
+  background:transparent url('goblin-plank.webp') center/100% 100% no-repeat;
+  border:1px solid transparent;border-radius:0;box-shadow:none;
+  filter:drop-shadow(0 4px 3px #0d100bcc);
+  padding:20px 12px 16px;
+}
+body[data-theme="goblin"] .channel-name {color:#f6e5b9;text-shadow:0 2px 1px #160e08,1px 0 #160e08}
+body[data-theme="goblin"] .channel-meta {color:#e2d1a7;text-shadow:0 1px #160e08}
+body[data-theme="goblin"] .channel-card:hover,
+body[data-theme="goblin"] .channel-card:focus-visible {filter:drop-shadow(0 3px 4px #141607) brightness(1.12)}
+body[data-theme="goblin"] .guide-row.preview-selected .channel-card {box-shadow:none;padding-left:12px}
+body[data-theme="goblin"] .channel-preview {
+  position:relative;isolation:isolate;margin:24px 0;
+  padding:24px;background:radial-gradient(ellipse at right,#343722,#231f17 75%);
+  border:2px solid #796443;border-radius:10px;
+  box-shadow:inset 0 1px #baa16a33,0 6px 18px #080b0888;
+}
+body[data-theme="goblin"] .channel-preview::before {
+  content:none;
+}
+body[data-theme="goblin"] .channel-preview-details,
+body[data-theme="goblin"] .channel-preview-screen {position:relative;z-index:1}
+body[data-theme="goblin"] #preview-title {font-family:'Skranji',system-ui,sans-serif;font-size:27px;color:#ead19a;text-shadow:0 2px #130e08}
+body[data-theme="goblin"] #preview-description {color:#e9dfbf;text-shadow:0 1px #13180d}
+body[data-theme="goblin"] #preview-channel {color:#d5d995;letter-spacing:.12em}
+body[data-theme="goblin"] .channel-preview-monitor {border:4px solid #826c46;border-radius:6px;box-shadow:0 4px 12px #0008}
+body[data-theme="goblin"] .nav-tabs button,
+body[data-theme="goblin"] .guide-browse button,
+body[data-theme="goblin"] #preview-watch,
+body[data-theme="goblin"] .preview-audio-controls button,
+body[data-theme="goblin"] .editor-actions button {
+  background:linear-gradient(#655333,#3b2e1e);color:#f2ddb3;border:1px solid #a18a5a;border-bottom:3px solid #21170e;
+  border-radius:7px 5px 8px 4px;box-shadow:inset 0 1px #d7c08155,0 2px 4px #0007;
+  text-shadow:0 1px 1px #1b1109;font-family:'Skranji',system-ui,sans-serif;font-weight:400;letter-spacing:.03em;
+}
+body[data-theme="goblin"] .nav-tabs .tab {align-self:center;min-height:42px;margin-right:5px}
+body[data-theme="goblin"] .nav-tabs .tab.active,
+body[data-theme="goblin"] .guide-browse button[aria-pressed="true"],
+body[data-theme="goblin"] #preview-watch {background:linear-gradient(#85924e,#4a5c2e);border-color:#b2ba70;border-bottom-color:#273315;color:#fff0c5}
+body[data-theme="goblin"] .nav-tabs .tab.active::after {display:none}
+body[data-theme="goblin"] #preview-watch {padding:12px 20px;min-height:44px;transform:rotate(-1deg);font-size:13px}
+body[data-theme="goblin"] .nav-tabs button:hover,
+body[data-theme="goblin"] .guide-browse button:hover,
+body[data-theme="goblin"] #preview-watch:hover {filter:brightness(1.15)}
+body[data-theme="goblin"] .nav-tabs button:active,
+body[data-theme="goblin"] #preview-watch:active {box-shadow:inset 0 2px 4px #16110888}
+body[data-theme="goblin"] button:disabled {filter:none;opacity:.45}
+@media(max-width:760px) {
+  body[data-theme="goblin"] .channel-preview {padding:18px;margin:20px 0 24px}
+  body[data-theme="goblin"] .nav-tabs .tab {margin:3px 4px 3px 0;padding-inline:10px}
+  body[data-theme="goblin"] .channel-card {padding:20px 7px 16px}
+}
+
+/* Cave alcove: floating paper and a physical CRT inside the salvaged cabinet. */
+body[data-theme="goblin"] .channel-preview {
+  grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:12px;
+  padding:20px 0 30px;background:radial-gradient(ellipse at 68% 85%,#080d0888,transparent 65%);
+  border:0;border-radius:0;box-shadow:none;margin:20px 0;
+}
+body[data-theme="goblin"] .channel-preview-details {
+  padding:48px 42px;color:#38271c;transform:rotate(-1.4deg);
+  background:none;border:0;border-radius:0;box-shadow:none;
+  filter:drop-shadow(5px 12px 8px #0008);
+}
+body[data-theme="goblin"] .channel-preview-details::before {
+  content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  border:38px solid transparent;border-image:url('goblin-document.png') 140 fill / 38px / 0 stretch;
+}
+body[data-theme="goblin"] #preview-title {font:700 38px/1.05 'Caveat',cursive;color:#4e2820;text-shadow:none}
+body[data-theme="goblin"] #preview-description {font:600 25px/1.28 'Caveat',cursive;color:#3c3021;text-shadow:none;max-height:7.7em}
+body[data-theme="goblin"] #preview-channel {font:700 18px/1.2 'Caveat',cursive;letter-spacing:.03em;color:#66522f}
+body[data-theme="goblin"] #preview-meta,
+body[data-theme="goblin"] .preview-hint {font:600 18px/1.2 'Caveat',cursive;color:#51452b;text-shadow:none}
+body[data-theme="goblin"] .channel-preview-screen {
+  width:100%;aspect-ratio:3/2;justify-self:center;
+  background:none;
+  filter:drop-shadow(0 18px 10px #0009);
+}
+body[data-theme="goblin"] .channel-preview-screen::before {
+  content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:url('goblin-cabinet-tv.png') center/contain no-repeat;
+  clip-path:polygon(1% 18%,6% 22%,6% 12%,9% 6%,15% 3%,23% 10%,73% 10%,83% 3%,93% 5%,95% 12%,91% 23%,99% 18%,99% 82%,93% 79%,93% 89%,87% 97%,80% 97%,78% 90%,23% 90%,22% 97%,14% 97%,9% 91%,9% 78%,1% 81%);
+}
+body[data-theme="goblin"] .channel-preview-screen .channel-preview-monitor {
+  position:absolute;left:26%;top:29.5%;width:41%;height:40%;aspect-ratio:auto;
+  border:2px solid #171c12;border-radius:9% / 12%;box-shadow:inset 0 0 10px #000;overflow:hidden;
+}
+body[data-theme="goblin"] .channel-preview-screen .preview-audio-controls {position:absolute;right:20%;bottom:25%;z-index:3;margin:0}
+body[data-theme="goblin"] .preview-badge {top:5px;left:9px;font-size:8px}
+/* A drawn tuning seal, with a readable action label and the original button semantics. */
+body[data-theme="goblin"] #preview-watch {
+  position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:130px;height:100px;margin:4px 0;padding:30px 8px 8px;
+  border:0;border-radius:50%;background:radial-gradient(ellipse,#71874b33,transparent 70%);
+  color:#7b2424;text-shadow:0 0 5px #cb3c3c66;box-shadow:none;
+  font:700 23px/1 'Caveat',cursive;letter-spacing:0;transform:rotate(-3deg);
+}
+body[data-theme="goblin"] #preview-watch::before {
+  content:"✧";position:absolute;inset:0;display:grid;place-items:start center;
+  padding-top:3px;font:48px/1 Georgia,serif;color:#8a342b;
+  border:2px solid #826b40;border-radius:50%;outline:1px dashed #997e47;outline-offset:-7px;
+}
+body[data-theme="goblin"] #preview-watch:hover {filter:none;color:#ac1c27;box-shadow:0 0 18px #9dba6955}
+body[data-theme="goblin"] #preview-watch:focus-visible {outline:3px solid #7b2424;outline-offset:5px}
+body[data-theme="goblin"] #preview-watch:active {box-shadow:inset 0 0 16px #788b4933}
+/* Fixed plaque dimensions: programme copy can never change the sign or its nails.
+   The illustration is contained at its original ratio; it is never stretched. */
+body[data-theme="goblin"] .guide-head,
+body[data-theme="goblin"] .guide-row {grid-template-columns:250px minmax(0,1fr)}
+body[data-theme="goblin"] .guide-row {height:128px;min-height:128px}
+body[data-theme="goblin"] .channel-card,
+body[data-theme="goblin"] .guide-row.preview-selected .channel-card {
+  box-sizing:border-box;width:calc(100% - 12px);height:108px;min-height:0;max-height:108px;margin:10px 12px 10px 0;
+  background:url('goblin-plank.webp') center/contain no-repeat;border:0;padding:24px 30px;box-shadow:none;
+  display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:3px;
+}
+body[data-theme="goblin"] .channel-card::after {content:none}
+body[data-theme="goblin"] .channel-number {position:absolute;left:4px;top:43px;display:grid;place-items:center;width:24px;height:22px;border:1px solid #96794d;border-radius:50%;background:#302314;color:#e8d6a7;font:9px/1 var(--mono);text-shadow:0 1px #160e08;box-shadow:inset 0 1px #c5a86c44}
+body[data-theme="goblin"] .channel-info {width:100%;min-width:0}
+body[data-theme="goblin"] .channel-name {
+  margin-top:0;padding-block:3px;font-size:18px;line-height:1.25;white-space:normal;overflow-wrap:anywhere;hyphens:auto;
+  display:block!important;overflow:visible;
+  color:#e6c889;text-shadow:0 1px 0 #291508,1px 0 0 #4c321b,0 -1px 0 #f4deb744;
+}
+body[data-theme="goblin"] .channel-meta {display:none!important}
+/* Paper edges are fixed-width slices. Only the plain paper centre stretches. */
+body[data-theme="goblin"] .schedule-track {padding-block:22px;container-type:inline-size}
+body[data-theme="goblin"] .schedule-track .programme {
+  --scroll-art:url('goblin-scroll-1.png');container-type:inline-size;
+  height:90px;padding:12px 12px;color:#3e2b1e;border:0;border-radius:0;
+  background:none;box-shadow:none;opacity:1;isolation:isolate;overflow:hidden;
+}
+body[data-theme="goblin"] .programme:nth-child(3n + 2) {--scroll-art:url('goblin-scroll-2.png')}
+body[data-theme="goblin"] .programme:nth-child(3n) {--scroll-art:url('goblin-scroll-3.png')}
+body[data-theme="goblin"] .programme::before {
+  content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  border:0 solid transparent;border-image:var(--scroll-art) 190 180 fill / 14px 14px / 0 stretch;
+}
+body[data-theme="goblin"] .programme .programme-title {font:700 22px/1.05 'Caveat',cursive}
+body[data-theme="goblin"] .programme .programme-tag,
+body[data-theme="goblin"] .programme .programme-time {display:block;font:600 13px/1 'Caveat',cursive;color:#5b4731;letter-spacing:0;margin:2px 0}
+body[data-theme="goblin"] .schedule-track .programme.current {
+  background:none;filter:drop-shadow(0 0 5px #afda77aa);box-shadow:none;
+  animation:goblin-scroll-glow 4s ease-in-out infinite alternate;z-index:1;
+}
+body[data-theme="goblin"] .programme.current .programme-title {color:#a02127;text-shadow:0 0 2px #ffd1aa,0 0 7px #d83a3977}
+body[data-theme="goblin"] .programme.current .programme-tag,
+body[data-theme="goblin"] .programme.current .programme-time {color:#594023}
+body[data-theme="goblin"] .programme.current::after {bottom:10px;left:10px;max-width:calc(100% - 20px);background:#728f40;box-shadow:0 0 5px #bce886}
+body[data-theme="goblin"] .schedule-track .programme.compact {padding:12px 6px;border-width:0}
+body[data-theme="goblin"] .programme.compact::before {border-image-width:9px 5px}
+@container(max-width:110px) {
+  body[data-theme="goblin"] .programme .programme-tag,
+  body[data-theme="goblin"] .programme .programme-time {display:none}
+  body[data-theme="goblin"] .programme .programme-title {font-size:19px;line-height:1.15}
+}
+@container(max-width:44px) {
+  body[data-theme="goblin"] .programme .programme-title {visibility:hidden}
+  body[data-theme="goblin"] .programme::before {border-image-width:9px 2px}
+}
+@keyframes goblin-scroll-glow {to{filter:drop-shadow(0 0 8px #afda77cc)}}
+@media(max-width:900px) {
+  body[data-theme="goblin"] .channel-preview {grid-template-columns:1fr}
+  body[data-theme="goblin"] .channel-preview-screen {max-width:640px}
+  body[data-theme="goblin"] .channel-preview-details {max-width:580px;justify-self:center;width:100%}
+}
+@media(max-width:760px) {
+  body[data-theme="goblin"] .guide-head,
+  body[data-theme="goblin"] .guide-row {grid-template-columns:200px minmax(0,1fr)}
+  body[data-theme="goblin"] .channel-name {font-size:16px;margin-top:0}
+  body[data-theme="goblin"] .channel-number {display:grid;left:3px;width:20px;font-size:8px}
+  body[data-theme="goblin"] .channel-preview-details {padding:40px 32px}
+  body[data-theme="goblin"] #preview-title {font-size:33px}
+}
+@media(max-width:420px) {
+  body[data-theme="goblin"] .guide-head,
+  body[data-theme="goblin"] .guide-row {grid-template-columns:190px minmax(0,1fr)}
+  body[data-theme="goblin"] .channel-card,
+  body[data-theme="goblin"] .guide-row.preview-selected .channel-card {padding-inline:24px}
+  body[data-theme="goblin"] .channel-name {font-size:16px}
+}
+@media(prefers-reduced-motion:reduce) {body[data-theme="goblin"] .schedule-track .programme.current {animation:none}}
+
+/* Cabinet feet sit on a mossy stone shelf, with a tight contact shadow. */
+body[data-theme="goblin"] .channel-preview-screen::after {
+  content:"";position:absolute;left:-3%;right:-3%;top:89.5%;height:25%;z-index:-2;pointer-events:none;
+  background:url('goblin-stone-shelf.png') center top/100% 100% no-repeat;
+  filter:drop-shadow(0 8px 5px #0008);
+}
+body[data-theme="goblin"] .channel-preview {padding-bottom:75px}
+.brand-goblin {display:none}
+body[data-theme="goblin"] .brand-initial {display:none}
+body[data-theme="goblin"] .brand-mark {width:52px;height:46px;border:0;background:none;box-shadow:none;overflow:visible}
+body[data-theme="goblin"] .brand-goblin {display:block;width:52px;height:40px;overflow:visible;animation:goblin-mascot-bob 6s ease-in-out infinite}
+.brand-goblin-eyes {transform-box:fill-box;transform-origin:center;animation:goblin-mascot-blink 7s infinite}
+@keyframes goblin-mascot-bob {0%,85%,100%{transform:translateY(0) rotate(-3deg)}92%{transform:translateY(-3px) rotate(3deg)}}
+@keyframes goblin-mascot-blink {0%,91%,95%,100%{transform:scaleY(1)}93%{transform:scaleY(.08)}}
+body[data-theme="goblin"] .nav-tabs .tab,
+body[data-theme="goblin"] .nav-tabs .tab.active {
+  flex:none;width:164px;height:58px;margin:3px 7px 3px 0;padding:0 16px;white-space:nowrap;
+  background:url('goblin-plank.webp') center/contain no-repeat;
+  border:0;border-radius:0;box-shadow:none;color:#e6c889;
+  text-shadow:0 1px #291508; font:700 16px/1 'Caveat',cursive;letter-spacing:0;
+}
+body[data-theme="goblin"] .nav-tabs .tab.active {filter:drop-shadow(0 0 3px #b9d17e88);color:#f2dfab}
+body[data-theme="goblin"] .nav-tabs {height:auto;min-height:68px;align-items:center}
+@media(prefers-reduced-motion:reduce) {
+  body[data-theme="goblin"] .brand-goblin,.brand-goblin-eyes {animation:none}
+}
+/* Distinct station artefacts: brass logo, cloth heading, stone and leather tabs. */
+body[data-theme="goblin"] .masthead {min-height:100px;height:auto;padding:10px 0}
+body[data-theme="goblin"] .brand {gap:8px;min-width:0}
+body[data-theme="goblin"] .brand-name {
+  width:280px;max-width:100%;height:64px;overflow:hidden;
+  font-size:0;line-height:0;letter-spacing:0;
+  background:url('goblin-station-logo.png') left center/contain no-repeat;
+}
+body[data-theme="goblin"] .brand-tag {font-size:8px;letter-spacing:.1em;margin-top:0;padding-left:10px}
+body[data-theme="goblin"] #page-guide .section-heading {align-items:center;gap:20px;margin-bottom:14px}
+body[data-theme="goblin"] #page-guide .section-heading>div:first-child {min-width:0;width:min(100%,480px)}
+body[data-theme="goblin"] #page-guide .section-heading h1 {
+  width:100%;height:130px;font-size:0;line-height:0;margin:0;
+  background:url('goblin-tonight-banner.png') left center/contain no-repeat;
+}
+body[data-theme="goblin"] #page-guide .section-heading .eyebrow {
+  display:inline-block;padding:5px 12px;margin:0 0 -3px 20px;
+  background:linear-gradient(#74603c,#342c1e);border:1px solid #9c8150;border-radius:12px 3px;
+  box-shadow:inset 0 1px #d7c08144,0 2px 4px #0008;color:#ead8a1;
+  font:700 15px/1 'Caveat',cursive;letter-spacing:.05em;
+}
+body[data-theme="goblin"] #page-guide .section-heading .subheading {
+  margin:0 12px;padding:9px 15px;color:#4c3722;font:600 19px/1.15 'Caveat',cursive;
+  border:0 solid transparent;border-image:url('goblin-scroll-3.png') 190 180 fill / 10px 12px / 0 stretch;
+}
+body[data-theme="goblin"] #guide-date {
+  color:#4c3722;font:700 18px/1.2 'Caveat',cursive;padding:17px 20px;
+  background:none;border:0 solid transparent;border-radius:0;
+  border-image:url('goblin-document.png') 140 fill / 16px / 0 stretch;
+}
+body[data-theme="goblin"] .nav-tabs .tab,
+body[data-theme="goblin"] .nav-tabs .tab.active {
+  display:inline-flex;align-items:center;justify-content:center;gap:0;
+  width:174px;height:64px;padding:0 22px;white-space:nowrap;
+  font:0/0 'Caveat',cursive;letter-spacing:0;transform:none;
+  background:url('goblin-guide-tablet.png') center/contain no-repeat;
+  color:#f0dfb3;text-shadow:0 1px #1d2518;
+}
+body[data-theme="goblin"] .nav-tabs .tab[data-page="library"] {
+  width:196px;background-image:url('goblin-library-ledger.png');color:#422619;text-shadow:0 1px #fff4;
+}
+body[data-theme="goblin"] .nav-tabs .tab span {margin:0;font:700 18px/1 'Caveat',cursive}
+body[data-theme="goblin"] .nav-tabs .tab.active {filter:drop-shadow(0 0 4px #b9d17e99)}
+body[data-theme="goblin"] .nav-tabs .tab:hover {filter:brightness(1.12)}
+body[data-theme="goblin"] .nav-tabs .tab:focus-visible {outline:2px solid #d8d88d;outline-offset:-7px}
+@media(max-width:760px) {
+  body[data-theme="goblin"] .brand-name {width:210px;height:52px}
+  body[data-theme="goblin"] .brand-tag {font-size:7px;max-width:210px}
+  body[data-theme="goblin"] .nav-tabs .tab,
+  body[data-theme="goblin"] .nav-tabs .tab.active {width:145px;height:58px;font-size:0;padding-inline:15px}
+  body[data-theme="goblin"] .nav-tabs .tab span {font-size:16px}
+  body[data-theme="goblin"] .nav-tabs .tab[data-page="library"] {width:170px}
+  body[data-theme="goblin"] #page-guide .section-heading {gap:10px;align-items:flex-start}
+  body[data-theme="goblin"] #page-guide .section-heading h1 {height:110px}
+}
+@media(max-width:420px) {
+  body[data-theme="goblin"] .brand-name {width:180px;height:48px}
+  body[data-theme="goblin"] .brand-tag {max-width:180px;font-size:6px;padding-left:4px}
+  body[data-theme="goblin"] .air-status {font-size:8px;gap:4px}
+  body[data-theme="goblin"] .air-status time {font-size:9px;margin-left:0}
+}
+/* Restrained Goblin chrome: one stone control family and plain guide headings. */
+body[data-theme="goblin"] #page-guide .section-heading h1 {
+  height:auto;background:none;font:700 36px/1.2 'Grenze Gotisch',Georgia,serif;
+  color:var(--lime);margin:0;
+}
+body[data-theme="goblin"] #page-guide .section-heading .eyebrow {
+  display:block;margin:0 0 10px;padding:0;background:none;border:0;border-radius:0;box-shadow:none;
+  color:var(--lime);font:9px/1.4 var(--mono);letter-spacing:1.3px;
+}
+body[data-theme="goblin"] #page-guide .section-heading .subheading {display:none}
+body[data-theme="goblin"] #page-guide .section-heading>div:first-child {display:none}
+body[data-theme="goblin"] #page-guide .section-heading {justify-content:flex-end;margin-bottom:0}
+body[data-theme="goblin"] #guide-date {
+  padding:10px 13px;background:#171e13b3;border:1px solid var(--line);border-image:none;
+  border-radius:7px;color:var(--text);font:11px/1.3 var(--mono);
+}
+body[data-theme="goblin"] .nav-tabs button,
+body[data-theme="goblin"] .nav-tabs .tab,
+body[data-theme="goblin"] .nav-tabs .tab.active,
+body[data-theme="goblin"] .nav-tabs .tab[data-page="library"],
+body[data-theme="goblin"] #player-dialog button:not([hidden]) {
+  box-sizing:border-box;min-height:44px;height:auto;padding:12px 18px;
+  background:none;border:0 solid transparent;border-radius:0;box-shadow:none;
+  border-image:url('goblin-guide-tablet.png') 120 220 fill / 9px 14px / 0 stretch;
+  color:#f1e2b9;text-shadow:0 1px 1px #151b10;
+  font:700 15px/1.2 'Caveat',cursive;letter-spacing:.02em;
+}
+body[data-theme="goblin"] .nav-tabs .tab,
+body[data-theme="goblin"] .nav-tabs .tab.active {width:150px;font-size:0;min-height:52px}
+body[data-theme="goblin"] .nav-tabs .tab[data-page="library"] {width:184px;font-size:0}
+body[data-theme="goblin"] .nav-tabs .tab span {font:700 17px/1.2 'Caveat',cursive}
+body[data-theme="goblin"] .nav-tabs .tab.active {filter:drop-shadow(0 0 3px #c2d18b88)}
+body[data-theme="goblin"] .nav-tabs button:focus-visible,
+body[data-theme="goblin"] #player-dialog button:focus-visible {outline:2px solid #d8d88d;outline-offset:-5px}
+body[data-theme="goblin"] .nav-tabs #settings-toggle {padding:10px 13px;min-width:42px}
+/* Keep the existing video sizing, overlays and fullscreen behaviour. */
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) {
+  border:7px ridge #756047;border-radius:12px;background:#11190f;
+  box-shadow:inset 0 0 14px #0009,0 20px 70px #000c;
+}
+body[data-theme="goblin"] #player-dialog .player-top {
+  background:linear-gradient(#151d11ed,#151d11cc,transparent);min-height:58px;height:auto;padding:8px 12px;gap:10px;
+}
+body[data-theme="goblin"] #player-dialog .player-actions {gap:5px;flex-wrap:wrap}
+body[data-theme="goblin"] #player-dialog .playback-controls {background:linear-gradient(transparent,#151d11ed 30%);padding:16px;gap:8px}
+body[data-theme="goblin"] #player-dialog .player-caption {
+  padding:12px 18px;color:#442f20;
+  border:0 solid transparent;border-image:url('goblin-scroll-2.png') 190 180 fill / 9px 12px / 0 stretch;
+}
+body[data-theme="goblin"] #player-title {font:700 23px/1.2 'Caveat',cursive;color:#4b291e;text-shadow:none}
+body[data-theme="goblin"] #player-meta {font:600 16px/1.2 'Caveat',cursive;color:#604a32}
+body[data-theme="goblin"] #player-status {font:700 16px/1.2 'Caveat',cursive;color:#e6dbad}
+body[data-theme="goblin"] #player-dialog #call-network {color:#ffd4a5;text-shadow:0 0 5px #cd3d2c}
+body[data-theme="goblin"] #player-dialog input[type="range"] {accent-color:#bfcc87}
+body[data-theme="goblin"] #player-dialog #quick-label-panel {background:#262d1c;color:#f1e5c6;border-color:#8c8058}
+body[data-theme="goblin"] #player-dialog button:disabled {opacity:.45;filter:none}
+@media(max-width:760px) {
+  body[data-theme="goblin"] #page-guide .section-heading h1 {font-size:30px}
+  body[data-theme="goblin"] .nav-tabs .tab,
+  body[data-theme="goblin"] .nav-tabs .tab.active {width:140px}
+  body[data-theme="goblin"] .nav-tabs .tab[data-page="library"] {width:175px}
+  body[data-theme="goblin"] .nav-tabs .tab span {font-size:16px}
+  body[data-theme="goblin"] .nav-tabs button {padding:10px 13px;font-size:14px}
+  body[data-theme="goblin"] #player-dialog button:not([hidden]) {padding:10px 12px;font-size:14px}
+  body[data-theme="goblin"] #player-dialog .player-top {padding:6px 8px;gap:6px}
+  body[data-theme="goblin"] #player-dialog .playback-controls {padding:10px;gap:6px}
+}
+body[data-theme="goblin"] #player-dialog :is(#channel-up,#channel-down,#quick-label-toggle) {
+  border:0 solid transparent;border-image:url('goblin-guide-tablet.png') 120 220 fill / 9px 14px / 0 stretch;
+  background:none;border-radius:0;color:#f1e2b9;padding:12px 16px;min-height:44px;
+  font:700 15px/1.2 'Caveat',cursive;text-shadow:0 1px #151b10;
+}
+body[data-theme="goblin"] #player-dialog :is(#close-player,#video-fullscreen) {min-width:44px;font-size:22px;padding:8px 13px}
+@media(max-width:600px) {
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) {max-height:94dvh;overflow:auto}
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top,
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .playback-controls {
+    position:relative;inset:auto;opacity:1;pointer-events:auto;background:#172011;
+  }
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top {flex-direction:column;align-items:stretch}
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-actions {justify-content:flex-end}
+}
+/* The channel ident is a small stone tablet inside the viewer. */
+body[data-theme="goblin"] #channel-osd {
+  background:none;border:0 solid transparent;border-radius:0;
+  border-image:url('goblin-guide-tablet.png') 120 220 fill / 10px 14px / 0 stretch;
+  box-shadow:none;filter:drop-shadow(0 4px 5px #0009);color:#eadcb3;
+}
+body[data-theme="goblin"] #channel-osd::before {
+  content:"GOBLIN CABLE";padding:10px 16px 0;border:0;background:none;
+  font:700 10px/1.3 'Caveat',cursive;letter-spacing:.08em;color:#cad495;
+}
+body[data-theme="goblin"] #channel-osd strong {
+  font-family:'Grenze Gotisch',Georgia,serif;font-weight:700;line-height:1.2;
+  transform:none;margin:0;border:0;box-shadow:none;color:#d6e1a5;
+  text-shadow:0 1px #17200f;padding:8px 12px 12px 16px;letter-spacing:.02em;
+}
+body[data-theme="goblin"] #channel-osd span {
+  font-family:'Caveat',cursive;font-weight:700;font-style:normal;line-height:1.15;
+  color:#f0dfb4;text-shadow:0 1px #17200f;padding:8px 16px 12px 6px;
+}
+@media(max-width:600px) {
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) #channel-osd {top:auto;width:min(290px,86%)}
+}
+body[data-theme="goblin"] #channel-osd {padding:18px 22px;row-gap:5px;grid-template-columns:72px minmax(0,1fr)}
+body[data-theme="goblin"] #player-dialog #channel-osd::before {padding:0 0 4px;border-bottom:1px solid #a5b67b44;font:700 11px/1.3 'Caveat',cursive;letter-spacing:.08em}
+body[data-theme="goblin"] #player-dialog #channel-osd strong {padding:0 14px 0 0;line-height:1.2;font-size:34px;border-right:1px solid #a5b67b44}
+body[data-theme="goblin"] #player-dialog #channel-osd span {padding:0 0 0 12px;line-height:1.2;font-size:22px}
+
+/* Enhanced fireflies, with original CSS fireflies as the Canvas fallback. */
+.goblin-firefly-canvas {display:none;position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:2}
+body[data-theme="goblin"] .goblin-firefly-canvas {display:block}
+body[data-theme="goblin"].goblin-fireflies-enhanced .goblin-firefly {display:none}
+/* Pigment sits in the grain rather than casting a raised-letter shadow. */
+body[data-theme="goblin"] .channel-card .channel-name {
+  font-family:'Skranji',system-ui,sans-serif;font-weight:400;letter-spacing:.025em;
+  color:#e4cc97;text-shadow:none;
+  background:repeating-linear-gradient(3deg,#ebd5a8 0px,#dfc18b 1px,#ebd5a8 2px,#c2a576 3px,#ebd5a8 4px);
+  background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  opacity:.94;
+}
+body[data-theme="goblin"] .channel-card .channel-meta {color:#d6bd8e;text-shadow:none;opacity:.88}
+/* Painted sign revision: broad brush lettering with flecks of bare wood. */
+body[data-theme="goblin"] .channel-card .channel-name {
+  font:700 28px/1.04 'Caveat',cursive;letter-spacing:.015em;
+  background-image:radial-gradient(ellipse at 28% 40%,#977747 0 .5px,transparent 1.2px),
+    radial-gradient(ellipse at 70% 65%,#b2925f 0 .6px,transparent 1.3px),
+    linear-gradient(177deg,#f0dca9,#d9b97d 55%,#ebd19a);
+  background-size:9px 7px,13px 11px,100% 100%;
+  background-clip:text;-webkit-background-clip:text;opacity:.97;
+}
+body[data-theme="goblin"] .channel-card::before {
+  content:"";position:absolute;inset:12% 5%;height:auto;pointer-events:none;transform:none;
+  background:
+    radial-gradient(ellipse 3px 2px at 9% 21%,#e7cc96 80%,transparent),
+    radial-gradient(ellipse 1px 2px at 12% 15%,#e7cc96 80%,transparent),
+    radial-gradient(ellipse 2px 1px at 7% 31%,#d6b780 80%,transparent),
+    radial-gradient(ellipse 2px 3px at 89% 68%,#e7cc96 80%,transparent),
+    radial-gradient(ellipse 1px 1px at 92% 60%,#e7cc96 80%,transparent),
+    radial-gradient(ellipse 1px 3px at 86% 78%,#d6b780 80%,transparent);
+  filter:none;opacity:.65;
+}
+body[data-theme="goblin"] .channel-card:nth-child(3n) .channel-name {transform:rotate(-.5deg)}
+@media(max-width:760px) {body[data-theme="goblin"] .channel-card .channel-name {font-size:25px}}

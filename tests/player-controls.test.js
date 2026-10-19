@@ -42,6 +42,36 @@ test('channel switching opens without controls and still shows the tuning overla
   context.tuneChannel('B');assert.equal(revealed,false);assert.equal(context.state.playback.mode,'channel');assert.deepEqual(osd,['002','B']);
 });
 
+test('ordinary popup clicks dismiss a lingering ident but preserve pending numeric entry',()=>{
+  const osd={hidden:false};let reveals=0,cleared=[];
+  const context={$:()=>osd,channelEntry:{digits:'',hideTimer:17},clearTimeout:id=>cleared.push(id),
+    revealPlayerControls(){reveals++;}};
+  vm.runInNewContext(source.slice(source.indexOf('function handlePlayerPointerDown()'),source.indexOf('function exitVideoView()')),context);
+  context.handlePlayerPointerDown();
+  assert.equal(osd.hidden,true);assert.deepEqual(cleared,[17]);assert.equal(reveals,1);
+  osd.hidden=false;context.channelEntry.digits='12';cleared=[];
+  context.handlePlayerPointerDown();
+  assert.equal(osd.hidden,false);assert.deepEqual(cleared,[]);assert.equal(context.channelEntry.digits,'12');assert.equal(reveals,2);
+});
+
+test('channel ident keeps its mounting, safe live text and original timeout behaviour',()=>{
+  const osd={children:[],style:{removeProperty(name){delete this[name];}},replaceChildren(){this.children=[];},append(...nodes){this.children.push(...nodes);}};
+  const dialog={open:true,clientTop:2,getBoundingClientRect:()=>({bottom:500}),append(node){this.mounted=node;}},body={append(node){this.mounted=node;}};
+  let videoBottom=498;
+  const player={getBoundingClientRect:()=>({bottom:videoBottom})};
+  const timers=[];
+  const context={$:id=>id==='#channel-osd'?osd:id==='#player'?player:dialog,document:{body,createElement:()=>({}),addEventListener(){}},window:{addEventListener(){}},channelEntry:{},
+    clearTimeout(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;}};
+  vm.runInNewContext(source.slice(source.indexOf('function showChannelOsd('),source.indexOf('function changeChannel(')),context);
+  context.showChannelOsd('001','<Cartoons>');
+  assert.equal(dialog.mounted,osd);assert.equal(osd.hidden,false);assert.equal(osd.children[1].textContent,'<Cartoons>');
+  assert.equal(osd.style.bottom,'54px');
+  videoBottom=280;context.positionChannelOsd();assert.equal(osd.style.bottom,'272px','mobile caption and controls stay below the ident');
+  assert.equal(timers[0].ms,2200);timers[0].fn();assert.equal(osd.hidden,true);
+  context.showChannelOsd('12_','TUNING…',false);assert.equal(osd.hidden,false);assert.equal(timers.length,1);
+  dialog.open=false;context.showChannelOsd('999','NO CHANNEL');assert.equal(body.mounted,osd);assert.equal(osd.style.bottom,undefined);
+});
+
 test('episode replay progress uses episode bounds, and seeking crosses scheduled breaks without moving live time',()=>{
   const catalog={videos:[{id:'v',file:'Videos/v.mp4',type:'programme',channels:['A'],duration:240,episode_review:'multiple',episodes:[{title:'First',start:0,end:120},{title:'Second',start:120,end:240}],breaks_approved:true,break_points:[150]},
     {id:'ad',file:'Adverts/ad.mp4',type:'advert',channels:[],duration:10}],channels:[{name:'A',ad_interval:30,ad_length:10}],settings:{}};

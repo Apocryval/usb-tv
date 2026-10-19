@@ -2,6 +2,29 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# Desktop file managers may start scripts without a visible terminal. Keep the
+# server attached to one so Ctrl+C and the final safe-eject message are reachable.
+IN_TERMINAL=0
+if [ "${1:-}" = "--usbtv-in-terminal" ]; then
+    IN_TERMINAL=1
+    shift
+fi
+if [ "$(uname -s)" = "Linux" ] && [ "$IN_TERMINAL" = 0 ] \
+        && { [ ! -t 0 ] || [ ! -t 1 ]; } \
+        && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+    if command -v konsole >/dev/null 2>&1; then
+        exec konsole --separate --hold -e sh "$ROOT/start-usbtv.sh" --usbtv-in-terminal "$@"
+    elif command -v gnome-terminal >/dev/null 2>&1; then
+        exec gnome-terminal --wait -- sh "$ROOT/start-usbtv.sh" --usbtv-in-terminal "$@"
+    elif command -v x-terminal-emulator >/dev/null 2>&1; then
+        exec x-terminal-emulator -e sh "$ROOT/start-usbtv.sh" --usbtv-in-terminal "$@"
+    elif command -v xterm >/dev/null 2>&1; then
+        exec xterm -hold -e sh "$ROOT/start-usbtv.sh" --usbtv-in-terminal "$@"
+    fi
+    echo "USB.tv needs a visible terminal. Open one in the USB drive and run: sh ./start-usbtv.sh" >&2
+    exit 1
+fi
+
 run_source() {
     if command -v python3 >/dev/null 2>&1; then
         exec python3 "$ROOT/src/server.py" --library-root "$ROOT" "$@"

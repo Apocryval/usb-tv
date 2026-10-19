@@ -527,7 +527,7 @@ def main():
     unavailable = {c["name"] for c in policy["channels"]} - {c["name"] for c in catalog.get("channels", [])}
     if unavailable:
         raise ValueError("Add the policy's channels in USB.tv before analysing: " + ", ".join(sorted(unavailable)))
-    videos = [v for v in catalog["videos"] if not v.get("missing")]
+    videos = [v for v in catalog["videos"] if not v.get("missing") and v.get("type") != "bumper"]
     if args.ids:
         ids = {value.strip().lstrip("#").zfill(6) for value in args.ids.split(",")}
         unknown = ids - {v["id"] for v in videos}
