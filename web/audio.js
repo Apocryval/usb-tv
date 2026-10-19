@@ -15,9 +15,12 @@
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = {gainFor};
   if (typeof document === 'undefined') return;
-  let context, enabled = true, profile = 'standard';
+  let context, enabled = true, profile = 'standard', staticVoice = null;
   const player = document.querySelector('#player');
   const preview = document.querySelector('#guide-preview-video');
+  player?.addEventListener('volumechange',()=>{
+    if (staticVoice) staticVoice.output.gain.setValueAtTime(player.muted ? 0 : player.volume,context.currentTime);
+  });
   const displays = [player,preview].filter(Boolean).map(video=>({video,track:null,gain:null,source:null,failed:false,lastKey:''}));
   function ensure(display) {
     if (display.source || display.failed || !enabled) return;
@@ -57,22 +60,51 @@
   }
   window.USBTvAudio = {
     gainFor, unlock,
-    playStatic() {
+    playStatic(durationMs = 320) {
       if (!player || player.muted || player.volume <= 0) return;
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
       try {
         context ||= new AudioContext();
         if (context.state === 'suspended') context.resume().catch(() => {});
-        const duration = .15, noise = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+        const duration = Math.max(.08,Math.min(.4,durationMs/1000));
+        const noise = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
         const samples = noise.getChannelData(0);
-        for (let i=0;i<samples.length;i++) samples[i]=Math.random()*2-1;
-        const source=context.createBufferSource(), gain=context.createGain(), now=context.currentTime;
-        source.buffer=noise; source.connect(gain); gain.connect(context.destination);
+        let low=0,bass=0,crackle=0;
+        const bassRate=1-Math.exp(-2*Math.PI*180/context.sampleRate);
+        const crackleDecay=Math.exp(-1/(context.sampleRate*.0015));
+        // Band-limited RF hiss with irregular short dropouts and tiny contact
+        // crackles. The receiver's bandwidth narrows as the signal settles.
+        const flutter=Math.random()*Math.PI*2;
+        for (let i=0;i<samples.length;i++) {
+          const t=i/context.sampleRate, progress=t/duration;
+          const cutoff=6200-4200*progress;
+          low+=(1-Math.exp(-2*Math.PI*cutoff/context.sampleRate))*(Math.random()*2-1-low);
+          bass+=bassRate*(low-bass);
+          crackle*=crackleDecay;
+          if (Math.random()<18/context.sampleRate) crackle+=(Math.random()*2-1)*.28*(1-progress);
+          const flutterGain=.74+.16*Math.sin(t*97+flutter)+.1*Math.sin(t*231+flutter);
+          const contact=.13*Math.exp(-t*180)*Math.sin(2*Math.PI*145*t);
+          samples[i]=Math.max(-.9,Math.min(.9,(low-bass)*flutterGain+crackle+contact));
+        }
+        const source=context.createBufferSource(), gain=context.createGain(), output=context.createGain(), now=context.currentTime;
+        if (staticVoice) {
+          staticVoice.gain.gain.cancelScheduledValues(now);
+          staticVoice.gain.gain.setValueAtTime(staticVoice.gain.gain.value,now);
+          staticVoice.gain.gain.linearRampToValueAtTime(0,now+.008);
+          staticVoice.source.stop(now+.008);
+        }
+        source.buffer=noise; source.connect(gain);gain.connect(output);output.connect(context.destination);
+        output.gain.setValueAtTime(player.volume,now);
         gain.gain.setValueAtTime(0,now);
-        gain.gain.linearRampToValueAtTime(.045*player.volume,now+.01);
+        // Filtered noise has much less energy than the old white-noise burst.
+        // Keep it audible beside programme audio, with a bounded peak and tail.
+        gain.gain.linearRampToValueAtTime(.30,now+.006);
+        gain.gain.linearRampToValueAtTime(.22,now+duration*.25);
+        gain.gain.linearRampToValueAtTime(.06,now+duration*.72);
         gain.gain.linearRampToValueAtTime(0,now+duration);
-        source.onended=()=>{source.disconnect();gain.disconnect();};
+        const voice={source,gain,output};staticVoice=voice;
+        source.onended=()=>{source.disconnect();gain.disconnect();output.disconnect();if(staticVoice===voice)staticVoice=null;};
         source.start(now); source.stop(now+duration);
       } catch (_) { /* Unsupported audio must never prevent tuning. */ }
     },

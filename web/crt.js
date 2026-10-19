@@ -9,6 +9,10 @@
     uniform vec2 resolution;
     uniform vec2 videoSize;
     uniform float clock;
+    uniform float crtEnabled;
+    uniform float tuning;
+    uniform float tuneSeed;
+    float noise(vec2 p) { return fract(sin(dot(p,vec2(12.9898,78.233)) + tuneSeed) * 437.); }
     vec3 sampleAt(vec2 p) { return texture2D(picture, clamp(p, .001, .999)).rgb; }
     void main() {
       // Preserve contain-style letterboxing before curving the picture.
@@ -18,9 +22,14 @@
       if (screenAspect > videoAspect) fit.x = videoAspect / screenAspect;
       else fit.y = screenAspect / videoAspect;
       vec2 p = (uv - .5) / fit * 2.;
-      p *= 1. + .055 * dot(p, p);
+      if (crtEnabled > .5) p *= 1. + .055 * dot(p, p);
       vec2 q = p * .5 + .5;
       if (max(abs(p.x), abs(p.y)) > 1.) { gl_FragColor = vec4(0.,0.,0.,1.); return; }
+      vec2 cleanQ = q;
+      // Horizontal sync slips in strips, with a rolling interference band.
+      float band = exp(-pow((fract(q.y + clock * .07) - .5) * 13., 2.));
+      float slip = (noise(vec2(floor(q.y * 65.), clock)) - .5) * .10;
+      q.x += tuning * tuning * (slip + band * .12);
       vec2 pixel = 1. / videoSize;
       // Slightly misaligned RGB guns, horizontal bleed and broad phosphor glow.
       vec3 sharp = vec3(sampleAt(q + vec2(pixel.x * .65,0.)).r,
@@ -41,9 +50,18 @@
       float grain = fract(sin(dot(floor(q * resolution),vec2(12.9898,78.233)) + clock) * 437.);
       color = pow(max(color, vec3(0.)), vec3(.96)) * scan * mask * vignette * 1.12;
       color += (grain - .5) * .012;
+      if (crtEnabled < .5) color = sampleAt(q);
+      if (tuning > 0.) {
+        float snow = noise(floor(cleanQ * resolution * .5) + vec2(clock * 31., 0.));
+        float bars = .5 + .5 * sin(cleanQ.y * 110. + clock * 3.);
+        vec3 interference = vec3(.08 + snow * .60) * (.75 + bars * .25);
+        float loss = clamp(tuning * .82 + band * tuning * .25, 0., .95);
+        // The incoming frame breaks through progressively as the signal locks.
+        color = mix(color, interference, loss);
+      }
       gl_FragColor = vec4(color,1.);
     }`;
-  let enabled = false, frame = 0, last = 0;
+  let enabled = false, frame = 0, last = 0, tuneStart = 0, tuneUntil = 0, tuneSeed = 0;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const displays = [...document.querySelectorAll('#player, #guide-preview-video')].map(video => ({video}));
   const overlay = document.querySelector('#crt-overlay');
@@ -84,7 +102,7 @@
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-    display.uniforms = Object.fromEntries(['resolution','videoSize','clock'].map(name => [name,gl.getUniformLocation(program,name)]));
+    display.uniforms = Object.fromEntries(['resolution','videoSize','clock','crtEnabled','tuning','tuneSeed'].map(name => [name,gl.getUniformLocation(program,name)]));
     canvas.addEventListener('webglcontextlost', event => {
       event.preventDefault(); display.failed = true; clear(display);
     });
@@ -100,7 +118,8 @@
       && bounds.right > 0 && bounds.left < innerWidth
       && (video.id === 'player' ? video.closest('dialog').open
         : document.querySelector('#page-guide').classList.contains('active') && !document.querySelector('#player-dialog').open);
-    if (!visible || video.readyState < 2 || display.failed) { clear(display); return; }
+    const tuning = video.id === 'player' && now < tuneUntil;
+    if (!visible || (!enabled && !tuning) || (video.readyState < 2 && !tuning) || display.failed) { clear(display); return; }
     try {
       if (!display.gl) initialise(display);
       const {canvas,gl,uniforms} = display;
@@ -112,10 +131,14 @@
       const height = Math.max(1, Math.round(bounds.height * scale));
       if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
       gl.viewport(0,0,width,height);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,video);
+      if (video.readyState >= 2) gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,video);
+      else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,1,1,0,gl.RGB,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0]));
       gl.uniform2f(uniforms.resolution,width,height);
-      gl.uniform2f(uniforms.videoSize,video.videoWidth,video.videoHeight);
-      gl.uniform1f(uniforms.clock,reducedMotion.matches ? 0 : Math.floor(now / 80) % 1000);
+      gl.uniform2f(uniforms.videoSize,video.videoWidth || 1280,video.videoHeight || 720);
+      gl.uniform1f(uniforms.clock,reducedMotion.matches ? 0 : Math.floor(now / (tuning ? 32 : 80)) % 1000);
+      gl.uniform1f(uniforms.crtEnabled,enabled ? 1 : 0);
+      gl.uniform1f(uniforms.tuning,tuning ? Math.max(0,1-(now-tuneStart)/(tuneUntil-tuneStart)) : 0);
+      gl.uniform1f(uniforms.tuneSeed,tuneSeed);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
       canvas.classList.add('crt-rendering'); video.classList.add('crt-shader-source');
       if (video.id === 'guide-preview-video' && overlay) {
@@ -129,7 +152,7 @@
     }
   }
   function tick(now) {
-    if (!enabled) return;
+    if (!enabled && now >= tuneUntil) { displays.forEach(clear); return; }
     // Cap GPU work at 30fps; hidden pages do no texture uploads.
     if (now - last >= 32) {
       last = now;
@@ -138,7 +161,21 @@
     }
     frame = requestAnimationFrame(tick);
   }
-  window.USBTvCRT = {setEnabled(value) {
+  window.USBTvCRT = {startTuning(duration=320) {
+    if (reducedMotion.matches || document.hidden) return false;
+    const player = displays.find(display => display.video.id === 'player');
+    if (!player) return false;
+    const now = performance.now();
+    tuneStart = now; tuneUntil = now + duration; tuneSeed = Math.random()*1000;
+    render(player,now);
+    if (!player.canvas?.classList.contains('crt-rendering')) { tuneUntil=0; return false; }
+    cancelAnimationFrame(frame); last=now; frame=requestAnimationFrame(tick);
+    return true;
+  },stopTuning() {
+    tuneUntil=0;
+    if (!enabled) { cancelAnimationFrame(frame); displays.forEach(clear); }
+  },setEnabled(value) {
+    tuneUntil=0;
     enabled = Boolean(value); cancelAnimationFrame(frame);
     displays.forEach(clear);
     if (enabled) { last = 0; frame = requestAnimationFrame(tick); }

@@ -5,14 +5,18 @@
   let timer, frame, last = -Infinity;
   function stop() {
     clearTimeout(timer); cancelAnimationFrame(frame); canvas.hidden = true;
+    window.USBTvCRT?.stopTuning();
   }
   function play() {
     if (performance.now() - last < 180) return;
     last = performance.now(); stop();
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && window.USBTvCRT?.startTuning(320)) {
+      window.USBTvAudio?.playStatic(320); timer=setTimeout(stop,320); return;
+    }
     const context = canvas.getContext('2d');
     if (!context) return;
     canvas.width = 160; canvas.height = 90; canvas.hidden = false;
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     function paint() {
       const pixels = context.createImageData(160,90);
       for (let i=0;i<pixels.data.length;i+=4) {
@@ -22,7 +26,7 @@
       context.putImageData(pixels,0,0);
       if (!reduced) frame=requestAnimationFrame(paint);
     }
-    paint(); window.USBTvAudio?.playStatic(); timer=setTimeout(stop,150);
+    paint(); window.USBTvAudio?.playStatic(150); timer=setTimeout(stop,150);
   }
   window.USBTvTransition={play,stop};
 })();

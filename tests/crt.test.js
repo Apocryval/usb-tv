@@ -15,8 +15,8 @@ function setup({gpu=true}={}) {
     createElement:()=>({style:{},classList:classes(),setAttribute(){},addEventListener(){},getContext:()=>gpu?gl:null})};
   const window={};
   vm.runInNewContext(fs.readFileSync('web/crt.js','utf8'),{document,window,innerWidth:1000,innerHeight:800,devicePixelRatio:1,
-    matchMedia:()=>({matches:false}),requestAnimationFrame:f=>{frames.set(++sequence,f);return sequence;},cancelAnimationFrame:id=>frames.delete(id)});
-  return {overlay,preview,player,dialog,setEnabled:window.USBTvCRT.setEnabled,
+    performance:{now:()=>100},matchMedia:()=>({matches:false}),requestAnimationFrame:f=>{frames.set(++sequence,f);return sequence;},cancelAnimationFrame:id=>frames.delete(id)});
+  return {overlay,preview,player,dialog,crt:window.USBTvCRT,setEnabled:window.USBTvCRT.setEnabled,
     step(now){const [id,fn]=frames.entries().next().value;frames.delete(id);fn(now);}};
 }
 
@@ -42,4 +42,20 @@ test('unavailable GPU keeps the CSS fallback intact',()=>{
   const s=setup({gpu:false});s.setEnabled(true);s.step(40);
   assert(!s.preview.classList.contains('crt-shader-source'));
   assert(!s.overlay.style.clipPath);
+});
+
+test('tuning can render before incoming video is ready, with CRT switched off',()=>{
+  const s=setup();s.dialog.open=true;s.player.readyState=0;
+  assert.equal(s.crt.startTuning(320),true);
+  assert(s.player.classList.contains('crt-shader-source'));
+  s.step(200);assert(s.player.classList.contains('crt-shader-source'));
+  s.step(450);assert(!s.player.classList.contains('crt-shader-source'));
+});
+
+test('stopping tuning restores raw video or continues the selected CRT mode',()=>{
+  const s=setup();s.dialog.open=true;assert(s.crt.startTuning());s.crt.stopTuning();
+  assert(!s.player.classList.contains('crt-shader-source'));
+  s.setEnabled(true);s.step(150);assert(s.crt.startTuning());s.crt.stopTuning();s.step(200);
+  assert(s.player.classList.contains('crt-shader-source'));
+  const fallback=setup({gpu:false});fallback.dialog.open=true;assert.equal(fallback.crt.startTuning(),false);
 });
