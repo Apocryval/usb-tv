@@ -505,7 +505,7 @@ function timeline(channel) {
   return state.timelines.get(channel);
 }
 function reviewReasons(video) {
-  return [!video.title?.trim() && "Needs title", !(video.duration > 0) && "Unreadable length / codec", !["advert","bumper"].includes(video.type) && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (!["advert","bumper"].includes(video.type) && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
+  return [!video.title?.trim() && "Needs title", video.title_source === "filename" && "Auto title — review", !(video.duration > 0) && "Unreadable length / codec", !["advert","bumper"].includes(video.type) && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (!["advert","bumper"].includes(video.type) && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
 }
 function guideMinutes() {
   const value = Number(state.catalog.settings?.guide_minutes ?? 120);
@@ -801,8 +801,43 @@ function renderLibrary() {
   $("#library-body").querySelectorAll("[data-edit]").forEach(button => button.addEventListener("click", () => openEditor(button.dataset.edit)));
 }
 let reshuffling = false;
+let deletingChannel = false;
+async function deleteChannel(name) {
+  if (deletingChannel || reshuffling || name === CUSTOMS_CHANNEL || !state.catalog.channels.some(channel=>channel.name===name)) return;
+  if (state.scanning) { showToast('Wait for the scan to finish before deleting a channel.'); return; }
+  const assigned = state.catalog.videos.filter(video=>video.channels?.includes(name));
+  const exclusiveAds = assigned.filter(video=>['advert','bumper'].includes(video.type) && video.channels.length===1);
+  const message = `Delete channel “${name}”?\n\nRemove this channel and its assignments from ${assigned.length} media item(s). Programmes with no remaining channel move to Interdimensional Customs.\n${exclusiveAds.length ? `${exclusiveAds.length} advert(s)/bumper(s) assigned only here will be disabled to prevent them playing on every channel.\n` : ''}\nYour video files and other channels will be kept. This cannot be undone.`;
+  if (!window.confirm(message)) return;
+  deletingChannel = true; renderChannels();
+  let previous, candidate, saved = false;
+  try {
+    await saveQueue; await broadcastQueue;
+    if (state.scanning) throw new Error('Wait for the scan to finish before deleting a channel.');
+    previous = state.catalog;
+    candidate = JSON.parse(JSON.stringify(previous));
+    candidate.channels = candidate.channels.filter(channel=>channel.name!==name);
+    for (const video of candidate.videos) {
+      const hadChannel = video.channels?.includes(name);
+      video.channels = (video.channels || []).filter(channel=>channel!==name);
+      if (hadChannel && !video.channels.length && ['advert','bumper'].includes(video.type)) video.enabled=false;
+    }
+    for (const rule of candidate.label_rules || []) rule.channels=(rule.channels || []).filter(channel=>channel!==name);
+    state.catalog = candidate;
+    state.catalog = await saveCatalog(); saved = true;
+    if (state.playback?.channel===name) $('#player-dialog').close();
+    if (guideNavigation.channel===name) guideNavigation.channel=null;
+    renderAll();
+    await broadcastQueue;
+    showToast(`Channel “${name}” deleted. Video files kept.`);
+  } catch (error) {
+    if (!saved && candidate && state.catalog===candidate) state.catalog=previous;
+    renderAll();
+    showToast(saved ? `Channel deleted. Schedule cleanup will retry: ${error.message}` : `Channel was not deleted: ${error.message}`);
+  } finally { deletingChannel=false; renderChannels(); }
+}
 async function reshuffleChannels(name = null) {
-  if (reshuffling || !broadcastState.ready) return;
+  if (reshuffling || deletingChannel || !broadcastState.ready) return;
   if (state.scanning) { showToast('Wait for the scan to finish before reshuffling.'); return; }
   reshuffling = true; renderChannels();
   try {
@@ -818,23 +853,30 @@ async function reshuffleChannels(name = null) {
 }
 $('#shuffle-all-channels').addEventListener('click', () => reshuffleChannels());
 function renderChannels() {
-  $('#shuffle-all-channels').disabled = !broadcastState.ready || reshuffling || !state.catalog.channels.length;
+  $('#shuffle-all-channels').disabled = !broadcastState.ready || reshuffling || deletingChannel || !state.catalog.channels.length;
+  $('#add-channel-form').querySelectorAll('input,button').forEach(control=>{control.disabled=deletingChannel;});
   $("#channel-settings").innerHTML = channelNames().map(name => {
     const channel = state.catalog.channels.find(item => item.name === name);
     if (name === CUSTOMS_CHANNEL) return `<div class="channel-setting"><strong>${esc(name)}</strong><span class="channel-lineup-status">Automatic queue of unassigned programmes. Assigned videos leave after the current showing. No adverts.</span></div>`;
     const pending = Object.hasOwn(broadcastState.channels,name) ? broadcastState.channels[name]?.pending : null;
     const status = pending ? `Updated lineup starts ${new Date(pending.anchor).toLocaleString([], {weekday:'short',hour:'2-digit',minute:'2-digit'})}` : 'Current lineup repeats until you change it.';
-    return `<div class="channel-setting"><strong>${esc(name)}</strong><label>Approx. interval (min)<input type="number" min="1" max="120" step="1" data-channel="${esc(name)}" data-setting="ad_interval" value="${Number(channel.ad_interval ?? state.catalog.settings.ad_interval ?? 900)/60}"></label><label>Break length (sec)<input type="number" min="0" max="600" step="1" data-channel="${esc(name)}" data-setting="ad_length" value="${Number(channel.ad_length ?? state.catalog.settings.ad_length ?? 90)}"></label><button type="button" class="media-edit" data-reshuffle="${esc(name)}">RESHUFFLE NOW</button><span class="channel-lineup-status">${esc(status)}</span></div>`;
+    return `<div class="channel-setting"><strong>${esc(name)}</strong><label>Approx. interval (min)<input type="number" min="1" max="120" step="1" data-channel="${esc(name)}" data-setting="ad_interval" value="${Number(channel.ad_interval ?? state.catalog.settings.ad_interval ?? 900)/60}"></label><label>Break length (sec)<input type="number" min="0" max="600" step="1" data-channel="${esc(name)}" data-setting="ad_length" value="${Number(channel.ad_length ?? state.catalog.settings.ad_length ?? 90)}"></label><button type="button" class="media-edit" data-reshuffle="${esc(name)}">RESHUFFLE NOW</button><button type="button" class="media-edit" data-delete-channel="${esc(name)}" aria-label="Delete channel ${esc(name)}">DELETE CHANNEL</button><span class="channel-lineup-status">${esc(status)}</span></div>`;
   }).join("") || '<p>Add a channel, then assign programmes to it in the editor.</p>';
   $("#channel-settings").querySelectorAll("input").forEach(input => input.addEventListener("change", async () => {
+    if (deletingChannel) return;
     if (!input.checkValidity()) { input.reportValidity(); return; }
     const channel = state.catalog.channels.find(item => item.name === input.dataset.channel);
     channel[input.dataset.setting] = Number(input.value) * (input.dataset.setting === "ad_interval" ? 60 : 1);
     try { state.catalog = await saveCatalog(); renderAll(); } catch (_) {}
   }));
   $("#channel-settings").querySelectorAll('[data-reshuffle]').forEach(button => {
-    button.disabled = !broadcastState.ready || reshuffling;
+    button.disabled = !broadcastState.ready || reshuffling || deletingChannel;
     button.addEventListener('click', () => reshuffleChannels(button.dataset.reshuffle));
+  });
+  $('#channel-settings').querySelectorAll('input').forEach(input=>{input.disabled=deletingChannel;});
+  $('#channel-settings').querySelectorAll('[data-delete-channel]').forEach(button=>{
+    button.disabled=deletingChannel || reshuffling || state.scanning;
+    button.addEventListener('click',()=>deleteChannel(button.dataset.deleteChannel));
   });
 }
 function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); }
@@ -869,7 +911,7 @@ function renderBulkRows() {
   const visible = pageItems(filteredBulkRows(),"bulk",bulkView);
   $("#bulk-body").innerHTML = visible.map(row => {
     const video = actual.get(row.id);
-    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><div class="settings-note">${formatDuration(video.duration)}${row.enabled===false||row.enabled===undefined&&video.enabled===false?" · Disabled":""}</div><div class="library-tags">${esc((row.tags||[]).join(" · "))}</div><span class="settings-note">${esc([...row.reasons,...reviewReasons(video).filter(reason=>reason.startsWith("Possibly multi-episode"))].join(" · "))}</span>${!["advert","bumper"].includes(video.type) && (video.duration > 3000 || video.episode_review === "multiple") ? `<button type="button" class="media-edit" data-review-episodes="${esc(video.id)}">REVIEW EPISODES</button>` : ""}</td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Type, description, tags &amp; taglines</summary><label>Type<select data-bulk-field="type" aria-label="Type for ${esc(row.id)}"><option value="programme" ${(row.type || video.type) === "programme" ? "selected" : ""}>Programme</option><option value="advert" ${(row.type || video.type) === "advert" ? "selected" : ""}>Advert</option><option value="bumper" ${(row.type || video.type) === "bumper" ? "selected" : ""}>Bumper</option></select></label><label>Bumper position<select data-bulk-field="bumper_role"><option value="to_ads" ${!["from_ads","both"].includes(row.bumper_role || video.bumper_role) ? "selected" : ""}>Before advert break</option><option value="from_ads" ${(row.bumper_role || video.bumper_role) === "from_ads" ? "selected" : ""}>After advert break</option><option value="both" ${(row.bumper_role || video.bumper_role) === "both" ? "selected" : ""}>Before and after</option></select></label>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${["advert","bumper"].includes(video.type) ? "All channels" : "Choose channels"}"></td></tr>`;
+    return `<tr data-id="${esc(row.id)}"><td><input type="checkbox" data-bulk-select aria-label="Approve media ${esc(row.id)}" ${row.selected ? "checked" : ""}></td><td><span class="media-id">#${esc(row.id)}</span><div class="bulk-file">${esc(video.file)}</div><div class="settings-note">${formatDuration(video.duration)}${row.enabled===false||row.enabled===undefined&&video.enabled===false?" · Disabled":""}</div><div class="library-tags">${esc((row.tags||[]).join(" · "))}</div><span class="settings-note">${esc([...row.reasons,...reviewReasons(video).filter(reason=>reason.startsWith("Possibly multi-episode") || reason === "Auto title — review")].join(" · "))}</span>${!["advert","bumper"].includes(video.type) && (video.duration > 3000 || video.episode_review === "multiple") ? `<button type="button" class="media-edit" data-review-episodes="${esc(video.id)}">REVIEW EPISODES</button>` : ""}</td><td><input data-bulk-field="title" aria-label="Title for ${esc(row.id)}" value="${esc(row.title)}" placeholder="Needs title"><details><summary>Type, description, tags &amp; taglines</summary><label>Type<select data-bulk-field="type" aria-label="Type for ${esc(row.id)}"><option value="programme" ${(row.type || video.type) === "programme" ? "selected" : ""}>Programme</option><option value="advert" ${(row.type || video.type) === "advert" ? "selected" : ""}>Advert</option><option value="bumper" ${(row.type || video.type) === "bumper" ? "selected" : ""}>Bumper</option></select></label><label>Bumper position<select data-bulk-field="bumper_role"><option value="to_ads" ${!["from_ads","both"].includes(row.bumper_role || video.bumper_role) ? "selected" : ""}>Before advert break</option><option value="from_ads" ${(row.bumper_role || video.bumper_role) === "from_ads" ? "selected" : ""}>After advert break</option><option value="both" ${(row.bumper_role || video.bumper_role) === "both" ? "selected" : ""}>Before and after</option></select></label>${[["description","Description",1000],["tags","Tags",1000],["tagline","Retro tagline",300],["tagline_goblin","Goblin tagline",300]].map(([field,label,limit]) => `<label>${label}<textarea data-bulk-field="${field}" aria-label="${label} for ${esc(row.id)}" maxlength="${limit}" rows="2">${esc(field === "tags" ? (row.tags || []).join(", ") : row[field] || "")}</textarea></label>`).join("")}</details></td><td><input data-bulk-field="genres" aria-label="Genres for ${esc(row.id)}" value="${esc(row.genres.join(", "))}" list="known-genres" placeholder="Choose genres"></td><td><input data-bulk-field="channels" aria-label="Channels for ${esc(row.id)}" value="${esc(row.channels.join(", "))}" list="known-channels" placeholder="${["advert","bumper"].includes(video.type) ? "All channels" : "Choose channels"}"></td></tr>`;
   }).join("");
   $("#bulk-body").querySelectorAll("[data-review-episodes]").forEach(button=>button.addEventListener("click",()=>openEditor(button.dataset.reviewEpisodes)));
   $("#bulk-body").querySelectorAll("[data-bulk-select]").forEach(input => input.addEventListener("change", () => {
@@ -979,6 +1021,7 @@ async function applyBulk(rulesOnly = false) {
     selected.forEach(row => {
       const video = state.catalog.videos.find(video => video.id === row.id);
       video.title = row.title.trim(); video.genres = row.genres; video.channels = row.channels;
+      if (video.title_source === 'filename') video.title_source = 'manual';
       for (const field of ["type", "bumper_role", "enabled", "description", "tags", "tagline", "tagline_goblin"]) if (row[field] !== undefined) video[field] = row[field];
     });
     state.catalog = await saveCatalog();
@@ -1148,6 +1191,7 @@ async function saveEditor(event) {
     const pendingGenre = $("#new-genre").value.trim();
     if (pendingGenre && !draft.genres.includes(pendingGenre)) draft.genres.push(pendingGenre);
     draft.title = $("#edit-title").value.trim();
+    if (draft.title_source === 'filename') draft.title_source = 'manual';
     draft.type = $("#edit-type").value;
     draft.bumper_role = $("#edit-bumper-role").value;
     draft.episode_review = $("#edit-episode-review").value;
@@ -1849,6 +1893,7 @@ document.querySelectorAll('input[name="theme"]').forEach(input => input.addEvent
 }));
 $("#add-channel-form").addEventListener("submit", async event => {
   event.preventDefault();
+  if (deletingChannel) return;
   const name = $("#new-channel").value.trim();
   if (!name || channelNames().includes(name)) { showToast("Choose a new channel name."); return; }
   const channel = {name};

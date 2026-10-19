@@ -12,6 +12,7 @@ import platform
 import sys
 import time
 from media import inspect_media, number, suggest_breaks, tool_path, measure_loudness, LOUDNESS_VERSION
+from titles import title_from_path
 from imports import ImportManager, RESERVED_FOLDERS
 
 EXTENSIONS = {".mp4", ".m4v", ".webm", ".ogv", ".mov", ".mkv", ".avi",
@@ -190,7 +191,7 @@ class Catalogue:
             by_file = {item.get("file"): item for item in current["videos"]}
             original = {item["id"]: item for item in baseline["videos"] if "id" in item}
             original_files = {item.get("file"): item for item in baseline["videos"]}
-            editable = ("title", "genres", "channels", "tags", "description", "tagline", "tagline_goblin",
+            editable = ("title", "title_source", "genres", "channels", "tags", "description", "tagline", "tagline_goblin",
                         "enabled", "type", "bumper_role", "break_points", "breaks_approved", "duration", "episode_review", "episodes")
             result = []
             for scanned in candidate["videos"]:
@@ -204,6 +205,8 @@ class Catalogue:
                             continue
                         if latest.get(key) != before.get(key):
                             item[key] = latest.get(key)
+                    if latest.get('title') != before.get('title'):
+                        item['title_source'] = latest.get('title_source') if latest.get('title_source') != before.get('title_source') else 'manual'
                 item["genre"] = ", ".join(item.get("genres", []))
                 result.append(item)
             ids = {item["id"] for item in result}
@@ -359,8 +362,9 @@ class Catalogue:
                                 metadata = inspect_media(path, self.root)
                             item["duration"] = metadata.get("duration", 0)
                             item["technical"] = metadata.get("technical", {})
-                            if not item.get("title") and metadata.get("title"):
+                            if not item.get("title") and item.get('title_source') != 'manual' and str(metadata.get("title", '')).strip():
                                 item["title"] = metadata["title"][:300]
+                                item['title_source'] = 'embedded'
                             if not item.get("genres") and metadata.get("genre"):
                                 item["genres"] = [metadata["genre"][:100]]
                             item["suggested_break_points"], item["break_suggestion_source"] = suggest_breaks(item["duration"], metadata.get("chapters", []))
@@ -375,6 +379,11 @@ class Catalogue:
                                         "episodes":item.get("episodes", [])}
                                 item["episodes"], item["episode_review"] = [], "unchecked"
                             item["probe_status"] = "ready" if item["duration"] > 0 else "needs_browser"
+                        if not str(item.get('title', '')).strip() and item.get('title_source') != 'manual':
+                            generated = title_from_path(rel, item.get('original_name'))
+                            if generated:
+                                item['title'] = generated
+                                item['title_source'] = 'filename'
                         after = path.stat()
                         if (after.st_size, after.st_mtime_ns) != (stat.st_size,stat.st_mtime_ns):
                             raise ValueError("File is still changing/copying; it will be retried on the next scan")
@@ -525,8 +534,11 @@ class Catalogue:
                 item = existing[edit["id"]]
                 if "fingerprint" in edit and edit["fingerprint"] != item.get("fingerprint"):
                     raise CatalogueConflict("This video's content changed. Refresh and review it before saving.")
+                old_title = item.get('title', '')
                 for key, limit in (("title", 300), ("description", 1000), ("tagline", 300), ("tagline_goblin", 300)):
                     item[key] = str(edit.get(key, item.get(key, ""))).strip()[:limit]
+                if item['title'] != old_title or item.get('title_source') == 'filename' and edit.get('title_source') == 'manual':
+                    item['title_source'] = 'manual'
                 for key in ("genres", "channels", "tags"):
                     item[key] = strings(edit.get(key, item.get(key, [])))
                 item["channels"] = [name for name in item["channels"] if name != CUSTOMS_CHANNEL]

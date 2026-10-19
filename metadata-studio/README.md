@@ -9,10 +9,47 @@ model for factual metadata. Tagline generation and export are disabled. It never
 Python uses only its standard library: there is no pip environment to install.
 **Python 3.10 or newer is required.**
 
+## How the models are selected
+
+Studio uses **two separate models**. You choose both in `metadata-studio/config.json`:
+
+| Setting | Purpose | Example |
+| --- | --- | --- |
+| `ollama_url` | Address of Ollama running on this same computer | `http://127.0.0.1:11434` |
+| `model` | Exact downloaded Ollama model name/tag for image analysis and metadata generation | `qwen3-vl:8b-instruct` |
+| `whisper_cli` | Native whisper.cpp transcription executable | Full path to `whisper-cli.exe` on Windows |
+| `whisper_model` | Local speech-transcription weights; this is a file, not an Ollama model | Full path to `ggml-base.en.bin` |
+| `library_root` | USB.tv library folder containing `Videos/`, `Adverts/` and either `data/catalog.json` or the older root `catalog.json` | Your own library path |
+
+FFmpeg extracts audio and frames → Whisper transcribes speech → the configured
+Ollama vision model analyses evidence and generates metadata → you review/export
+the results → you import selected rows into USB.tv. No cloud API key is used.
+Studio accepts only a local Ollama address and rejects models identified as cloud
+or remotely hosted. It checks that the requested model is downloaded and, when
+Ollama reports model capabilities, that it supports vision.
+
+It does **not** choose a model for your hardware, install dependencies, or download
+models automatically. Download the vision model with `ollama pull NAME`, then put
+that same name in `model`. To switch transcription models, download compatible
+whisper.cpp weights and change `whisper_model`; set `language` appropriately too.
+
+Copy `config.example.json` to `config.json` on each analysis computer and replace
+the example paths. `config.json`, models, caches and generated reports are excluded
+from Git, so downloading the repository on another computer does not copy this
+PC's working configuration. Studio reads `config.json` beside `studio.py` by
+default; `--config PATH` selects another file. Missing config is an error. Omitted
+optional settings use defaults; the default Ollama model is the example above.
+
+For a first run, complete the installation below, run `doctor`, analyse **one**
+video, review the result, then increase the batch size. `doctor` must report
+**Ready.** before analysis, but it does not benchmark speed or prove a full video
+will fit in memory. A large all-library run should come after a small pilot.
+
 ## Windows setup, once
 
-1. Install [Python](https://www.python.org/downloads/windows/) (enable its launcher),
-   [Ollama for Windows](https://docs.ollama.com/windows) and a current NVIDIA driver.
+1. Install [Python](https://www.python.org/downloads/windows/) (enable its launcher)
+   and [Ollama for Windows](https://docs.ollama.com/windows). If using NVIDIA
+   acceleration, also install the appropriate NVIDIA driver.
 2. Open PowerShell and download the starter vision model:
 
    ```powershell
@@ -55,8 +92,9 @@ Python uses only its standard library: there is no pip environment to install.
    ```
 
    Use forward slashes in JSON paths, or double each backslash. Paths can contain
-   spaces. `library_root` is the folder containing `catalog.json`, `Videos` and
-   `Adverts`; it can be a local copy of the library or the mounted USB. The existing per-computer video-folders.json mapping is respected for programme media on an external HDD. Optional video_root overrides that programme folder for standalone authoring; Adverts stays at the library root.
+   spaces. `library_root` is the USB.tv folder containing `Videos` and `Adverts`,
+   with saved catalogue data either in `data/` or at the root in older libraries;
+   it can be a local copy of the library or the mounted USB. The existing per-computer video-folders.json mapping is respected for programme media on an external HDD. Optional video_root overrides that programme folder for standalone authoring; Adverts stays at the library root.
 7. Open PowerShell **in the metadata-studio folder**:
 
    ```powershell
@@ -140,8 +178,9 @@ that supplied these videos; sequential IDs alone are not unique across libraries
 If you rename a file after analysis, rescan and regenerate suggestions for it.
 Genres remain separate from channel routing. AI channel suggestions are limited
 to the named, defined channels in taxonomy.json; uncertain allocations stay empty for you to decide. The tool checks that those channels exist in the supplied catalogue before analysis.
-**Saving replaces each approved row's label lists**, so retain any existing labels
-you want when reviewing.
+The player's default **Keep existing** import policy protects existing values.
+Choose **Replace** explicitly if the reviewed AI metadata should replace existing
+titles or label lists; retain the values you still want before saving selected rows.
 
 Use **Save review draft** before closing the page or regenerating analysis, then
 **Load draft** to resume. Browser edits are not automatically written back to disk.
@@ -207,7 +246,13 @@ CRTV is withheld when the structured result has no original release year, a year
 
 Metadata results record policy version/digest. Re-running generation uses the current policy; a report from a different policy is not silently merged into the new batch. Raw extraction/speech/vision stages can be reused when the policy changes. Reports also record per-video wall time and actual Ollama request/token/load/inference counts, so a representative pilot can inform throughput and any later cloud-cost estimate.
 
-## Installed setup on this Windows PC
+## Reference only: installed setup on the original Windows PC
+
+This describes one machine, not dependencies supplied by a GitHub download. New
+users should follow the setup above and use paths on their own computer. Standard
+installed Ollama does not need `ai_root` in the config. The optional Windows-only
+portable helper uses `ai_root` to locate `ollama/ollama.exe` and model/log storage;
+it starts an existing installation, but does not install Ollama or download models.
 
 Portable dependency files live under `E:/USBtv-AI`, outside the video folders: Ollama v0.40.5 and its NVIDIA runtime, whisper.cpp b5454 CPU x64, and the base.en English transcription model. Official release archives and transcription weights were verified against publisher SHA256 values; source URLs/checksums are recorded in `E:/USBtv-AI/dependency-sources.json`. The selected vision model is qwen3-vl:8b-instruct and is downloaded/verified by Ollama into `E:/USBtv-AI/ollama-models`.
 

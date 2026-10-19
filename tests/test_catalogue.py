@@ -30,7 +30,7 @@ class CatalogueTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.catalog = Catalogue(self.root, organise_new=False)
 
-    def test_mp4_title_duration_and_no_filename_title(self):
+    def test_mp4_title_preferred_and_filename_title_used_when_missing(self):
         path = self.root / 'Videos' / 'messy_892_xxx.mp4'
         path.write_bytes(mp4())
         with patch('media.tool_path', return_value=None):
@@ -40,7 +40,8 @@ class CatalogueTests(unittest.TestCase):
         path = self.root / 'Adverts' / 'ugly_name.mp4'
         path.write_bytes(mp4(30, ''))
         item = next(v for v in self.catalog.scan()['videos'] if v['file'].startswith('Adverts/'))
-        self.assertEqual(item['title'], '')
+        self.assertEqual(item['title'], 'ugly name')
+        self.assertEqual(item['title_source'], 'filename')
         self.assertEqual(item['type'], 'advert')
         self.assertEqual(item['channels'], [])
 

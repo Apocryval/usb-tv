@@ -11,7 +11,7 @@ TARGET_APPS = {
     "windows-x64": "Apps/windows-x64/USBtv.exe",
 }
 SOURCE_FILES = {"web/" + name for name in ASSETS} | {
-    "src/" + name for name in ("server.py", "catalogue.py", "media.py", "imports.py", "broadcasts.py", "session.py", "distribution.py", "updater.py", "library_paths.py")
+    "src/" + name for name in ("server.py", "catalogue.py", "media.py", "imports.py", "titles.py", "broadcasts.py", "session.py", "distribution.py", "updater.py", "library_paths.py")
 } | {"scripts/build.py", "scripts/package_update.py", "scripts/requirements-build.txt",
      "README.md", "docs/BUILD-AND-UPDATE.md", "docs/USER-GUIDE.md", "data/.gitkeep",
      "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
