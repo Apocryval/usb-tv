@@ -28,6 +28,9 @@
     if (!AudioContext) { display.failed = true; return; }
     try {
       context ||= new AudioContext();
+      // Routing video into a suspended context can stall its media clock.
+      // Keep native playback until audio has actually been unlocked.
+      if (context.state !== 'running') return;
       display.source = context.createMediaElementSource(display.video);
       display.gain = context.createGain();
       display.source.connect(display.gain);
@@ -47,8 +50,9 @@
     else gain.gain.linearRampToValueAtTime(target,now + .15);
   }
   function unlock() {
-    displays.filter(display=>display.track).forEach(ensure);
-    if (context?.state === 'suspended') context.resume().catch(() => {});
+    const connect = () => displays.filter(display=>display.track).forEach(display=>{ensure(display);update(display,true);});
+    connect();
+    if (context?.state === 'suspended') context.resume().then(connect).catch(() => {});
   }
   document.addEventListener('pointerdown', () => { if (context) unlock(); },{passive:true});
   document.addEventListener('keydown', () => { if (context) unlock(); });

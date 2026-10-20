@@ -16,8 +16,9 @@
   soundButton.disabled = true;
   soundButton.textContent = 'TUNING IN…';
   // The catalogue is loaded by app.js, once, before selecting this ident.
-  // A failed or slow local server must never trap the user on the startup screen.
-  const themeTimeout = setTimeout(() => begin('satellite'), 4000);
+  // A slow USB must not play a Satellite ident before its saved theme arrives.
+  // Skip/Escape stay available; load failures are handled by app.js.
+  const themeTimeout = setTimeout(() => { soundButton.textContent = 'READING LIBRARY…'; }, 4000);
   const context = canvas.getContext('2d');
   canvas.width = 240; canvas.height = 150;
   const pixels = context?.createImageData(canvas.width, canvas.height);

@@ -89,7 +89,8 @@ function updateClock() {
 }
 
 async function loadCatalog() {
-  await loadVideoFolder();
+  // Folder availability must not delay loading the saved theme and catalogue.
+  void loadVideoFolder();
   const [response, broadcasts] = await Promise.all([
     apiFetch("/api/catalog", { cache: "no-store" }), apiFetch('/api/broadcasts', {cache:'no-store'})
   ]);
@@ -288,8 +289,15 @@ window.addEventListener('keydown',event=>{
 function updatePlaybackControls() {
   const player = $("#player");
   $("#playback-toggle").textContent = player.paused ? "PLAY" : "PAUSE";
-  $("#playback-mute").textContent = player.muted ? "UNMUTE" : "MUTE";
-  $("#playback-mute").setAttribute("aria-label",player.muted ? "Unmute audio" : "Mute audio");
+  const muteButton = $("#playback-mute");
+  const muteState = String(player.muted);
+  if (muteButton.dataset.muted !== muteState) {
+    muteButton.dataset.muted = muteState;
+    muteButton.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4Z"/>${player.muted ? '<path d="m16 9 6 6m0-6-6 6"/>' : '<path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/>'}</svg>`;
+  }
+  muteButton.title = player.muted ? "Unmute audio" : "Mute audio";
+  muteButton.setAttribute("aria-label",muteButton.title);
+  muteButton.setAttribute("aria-pressed",muteState);
   $("#playback-volume").value = player.volume;
   const progress=playerProgress();
   $("#playback-time").textContent = `${stamp(progress.value-progress.min)} / ${progress.max>progress.min ? stamp(progress.max-progress.min) : "—"}`;
@@ -337,7 +345,11 @@ function seekPlayback(position) {
   const segment=(current.segment.advert || current.segment.bumper)?current.segment:current.block.segments.find(s=>!s.advert && !s.bumper && target>=s.offset && target<s.offset+s.duration);
   if(!segment)return;
   const cycleStart=current.start-current.block.start*1000;
-  const cursor=cycleStart+(segment.start+target-segment.offset)*1000;
+  // Fractional durations lose precision when added to epoch milliseconds.
+  // Stay just inside this segment, as programme navigation does, so zero
+  // cannot resolve to the previous video (or the preceding advert break).
+  const offset=Math.max(Math.min(.0005,segment.duration/2),target-segment.offset);
+  const cursor=cycleStart+(segment.start+offset)*1000;
   if(cursor>=Date.now()) {
     if (playback.mode==='replay') returnToLive(false);
     else {showToast('You are already watching live.');updatePlaybackControls();}
@@ -698,7 +710,7 @@ function updateGuideAudioControls() {
   button.querySelector(".preview-sound-waves").toggleAttribute("hidden", muted);
   button.querySelector(".preview-sound-off").toggleAttribute("hidden", !muted);
   $("#preview-badge").textContent = muted ? "LIVE · MUTED" : "LIVE";
-  $("#preview-play").textContent = muted ? "PLAY PREVIEW" : "PLAY WITH SOUND";
+  $("#preview-play").textContent = guidePreview.autoMuted ? "ENABLE SOUND" : muted ? "PLAY PREVIEW" : "PLAY WITH SOUND";
 }
 function syncGuidePreview() {
   const player = $("#guide-preview-video");
@@ -721,8 +733,8 @@ function syncGuidePreview() {
   $("#preview-meta").textContent = `${formatTime(new Date(current.start))}–${formatTime(new Date(current.end))} · ${(video.genres || []).join(" / ") || "Uncategorised"}`;
   const key = `${guidePreview.channel}:${current.key}`;
   if (guidePreview.key !== key) {
-    Object.assign(guidePreview, {key, loaded:false, failed:false, blocked:false});
-    $("#preview-message").hidden = true; $("#preview-play").hidden = true;
+    Object.assign(guidePreview, {key, loaded:false, failed:false, blocked:false, starting:false});
+    $("#preview-message").hidden = true; $("#preview-play").hidden = !guidePreview.autoMuted;
     player.onloadedmetadata = () => {
       if (guidePreview.key !== key) return;
       guidePreview.loaded = true;
@@ -730,16 +742,24 @@ function syncGuidePreview() {
     };
     player.src = videoUrl(video.file); player.load();
   } else if (guidePreview.loaded && !guidePreview.failed) {
+    // A blocked preview must not become a slideshow of periodic live seeks.
+    if (guidePreview.blocked || guidePreview.starting) return;
     if (player.paused || Math.abs(player.currentTime - current.position) > 3) seekToLive(current.position, player);
-    if (player.paused && !guidePreview.blocked) {
+    if (player.paused) {
+      guidePreview.starting = true;
       player.play().then(() => {
         if (guidePreview.key === key && !player.muted && window.USBTvAudio?.suspended()) {
           guidePreview.blocked = true; $("#preview-play").hidden = false;
         }
-      }).catch(() => {
+      }).catch(async error => {
         if (guidePreview.key !== key || !$("#page-guide").classList.contains("active") || document.hidden || $("#player-dialog").open) return;
+        if (error.name === 'NotAllowedError' && !player.muted) {
+          player.muted = true; guidePreview.autoMuted = true;
+          updateGuideAudioControls(); $("#preview-play").hidden = false;
+          try { await player.play(); return; } catch (_) {}
+        }
         guidePreview.blocked = true; $("#preview-play").hidden = false;
-      });
+      }).finally(() => { if (guidePreview.key === key) guidePreview.starting = false; });
     }
   }
 }
@@ -1925,12 +1945,14 @@ $("#preview-mute").addEventListener("click", () => {
   window.USBTvAudio?.unlock();
   const player = $("#guide-preview-video");
   player.muted = !player.muted;
+  guidePreview.autoMuted = false;
   guidePreview.blocked = false; $("#preview-play").hidden = true;
   updateGuideAudioControls(); syncGuidePreview();
 });
 $("#guide-preview-video").addEventListener("volumechange", updateGuideAudioControls);
 $("#preview-play").addEventListener("click", () => {
   window.USBTvAudio?.unlock();
+  if (guidePreview.autoMuted) { $("#guide-preview-video").muted = false; guidePreview.autoMuted = false; updateGuideAudioControls(); }
   guidePreview.blocked = false; $("#preview-play").hidden = true; syncGuidePreview();
 });
 $("#guide-preview-video").addEventListener("error", () => {

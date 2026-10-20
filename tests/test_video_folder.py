@@ -18,6 +18,23 @@ import server
 
 
 class VideoFolderTests(unittest.TestCase):
+    def test_switching_external_folder_does_not_reuse_same_size_and_timestamp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = Catalogue(root / 'app', organise_new=False)
+            first, second = root / 'first', root / 'second'
+            first.mkdir(); second.mkdir()
+            (first / 'one.mp4').write_bytes(b'first')
+            (second / 'one.mp4').write_bytes(b'other')
+            stamp = (first / 'one.mp4').stat()
+            os.utime(second / 'one.mp4', ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            with patch('catalogue.inspect_media', return_value={'duration': 30}):
+                library.set_video_folder(str(first))
+                original = library.scan()['videos'][0]['fingerprint']
+                library.set_video_folder(str(second))
+                changed = library.scan()['videos'][0]['fingerprint']
+            self.assertNotEqual(original, changed)
+
     def test_external_files_are_untouched_until_preparation_is_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

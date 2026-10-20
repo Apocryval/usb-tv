@@ -2,6 +2,14 @@
 
 # USB.tv development handoff
 
+## Playback and startup fixes (20 October 2026)
+
+Unchanged scans now reuse bundled-media fingerprints after USB drive-letter changes, avoid repeated whole-catalogue merges, skip redundant directory discovery, and throttle progress-file writes. External folder changes still invalidate the cache. Startup waits for the saved theme instead of playing a premature Satellite ident, and folder availability checks no longer delay catalogue loading.
+
+Blocked preview autoplay falls back to muted playback with an Enable sound action. Blocked or pending playback no longer repeatedly seeks, and loudness routing waits until its audio context is running. Scrubbing to a segment start adds the same tiny inward boundary margin used by programme navigation, preventing fractional timestamps from resolving to the previous video or advert. The main mute control uses a fixed 44px speaker icon with accessible action labels, avoiding the layout change between MUTE and UNMUTE.
+
+Validation: 87 Python and 123 JavaScript tests pass, including drive relocation, external-folder cache invalidation, initial autoplay, repeated zero seeks, episodes and advert boundaries. The Windows development executable was rebuilt. An isolated 500-file unchanged-scan comparison measured 0.445s before and 0.169s after; USB timings vary. The portable USB currently uses its bundled Python source launcher, so install structured `src/` and `web/` updates while preserving its launcher, runtime and personal library. Only update the USB when the user explicitly requests it.
+
 This is a source-only development copy prepared from the Mac project. The original playable library remains in the parent USB.tv folder. Continue development in this repository after opening it as a Codex project on either computer.
 
 ## Library data

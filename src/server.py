@@ -73,6 +73,7 @@ class ScanJobs:
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread = None
+        self.last_progress_save = 0
         self.state = {"status":"idle", "completed":0, "total":0, "errors":[], "changed":False}
         if self.path.exists():
             try:
@@ -130,8 +131,10 @@ class ScanJobs:
                 values["errors"] = values["errors"][:50]
             previous_stage = self.state.get("stage")
             self.state.update(values)
-            if previous_stage != self.state.get("stage") or "completed" in values and values["completed"] % 25 == 0:
+            now = time.monotonic()
+            if previous_stage != self.state.get("stage") or now - self.last_progress_save >= 1:
                 self.persist()
+                self.last_progress_save = now
 
     def run(self):
         before = None

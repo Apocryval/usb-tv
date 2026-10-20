@@ -30,6 +30,46 @@ class CatalogueTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.catalog = Catalogue(self.root, organise_new=False)
 
+    def test_unchanged_scan_does_not_read_media_or_checkpoint_every_batch(self):
+        for index in range(55):
+            (self.root / 'Videos' / f'{index}.mp4').write_bytes(mp4())
+        first = self.catalog.scan()
+        with patch('catalogue.hashlib.sha256', side_effect=AssertionError('Rehashed unchanged media')), \
+                patch('catalogue.inspect_media', side_effect=AssertionError('Reprobed unchanged media')), \
+                patch.object(self.catalog, 'commit_scan', wraps=self.catalog.commit_scan) as commit, \
+                patch.object(self.catalog, 'write', wraps=self.catalog.write) as write:
+            self.assertEqual(self.catalog.scan(), first)
+        self.assertEqual(commit.call_count, 2)  # Initial migration and final merge only.
+        write.assert_not_called()
+
+    def test_bundled_cache_survives_legacy_usb_drive_letter_change(self):
+        (self.root / 'Videos' / 'one.mp4').write_bytes(mp4())
+        first = self.catalog.scan()
+        first['videos'][0]['scan_source'] = r'Z:\USB.tv\Videos\one.mp4'
+        self.catalog.write(first)
+        with patch('catalogue.hashlib.sha256', side_effect=AssertionError('Rehashed moved USB')), \
+                patch('catalogue.inspect_media', side_effect=AssertionError('Reprobed moved USB')):
+            result = self.catalog.scan()
+        self.assertEqual(result['videos'][0]['fingerprint'], first['videos'][0]['fingerprint'])
+        self.assertEqual(result['videos'][0]['scan_source'], 'Videos/one.mp4')
+
+    def test_changed_file_still_invalidates_cached_metadata(self):
+        path = self.root / 'Videos' / 'one.mp4'
+        path.write_bytes(mp4())
+        first = self.catalog.scan()
+        path.write_bytes(mp4(duration=60) + b'changed')
+        result = self.catalog.scan()
+        self.assertNotEqual(result['videos'][0]['fingerprint'], first['videos'][0]['fingerprint'])
+        self.assertEqual(result['videos'][0]['duration'], 60)
+
+    def test_scan_preserves_theme_changed_while_discovering(self):
+        (self.root / 'Videos' / 'one.mp4').write_bytes(mp4())
+        self.catalog.scan()
+        def progress(**values):
+            if values.get('stage') == 'discovering':
+                self.catalog.save_edits({'videos': [], 'settings': {'theme': 'teletext'}})
+        self.assertEqual(self.catalog.scan(progress=progress)['settings']['theme'], 'teletext')
+
     def test_mp4_title_preferred_and_filename_title_used_when_missing(self):
         path = self.root / 'Videos' / 'messy_892_xxx.mp4'
         path.write_bytes(mp4())

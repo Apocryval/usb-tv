@@ -173,13 +173,14 @@ class Catalogue:
         if not self.video_root.is_dir():
             raise ValueError("Video folder is unavailable. Reconnect the drive or choose another folder in Library & labels.")
         for folder in (self.video_root, self.root / "Adverts"):
+            resolved_folder = folder.resolve()
             def walk_error(error):
                 raise error
             for directory, folders, names in os.walk(folder, followlinks=False, onerror=walk_error):
                 folders[:] = [name for name in folders if name not in RESERVED_FOLDERS]
                 for name in names:
                     path = Path(directory) / name
-                    if path.is_file() and path.suffix.lower() in EXTENSIONS and path.resolve().is_relative_to(folder.resolve()):
+                    if path.suffix.lower() in EXTENSIONS and path.is_file() and path.resolve().is_relative_to(resolved_folder):
                         paths.append(path)
         return sorted(paths, key=lambda path: self.media_name(path).casefold())
 
@@ -286,13 +287,18 @@ class Catalogue:
             external = self.video_root.resolve() != (self.root / "Videos").resolve()
             def may_prepare(name):
                 return not name.startswith("Videos/") or not external or data["settings"]["prepare_external_imports"]
-            if organise_new or (self.root / "imports.json").exists():
+            if organise_new or (self.data_root / "imports.json").exists():
                 organiser = ImportManager(self.root, {"Videos": self.video_root, "Adverts": self.root / "Adverts"}, old, files)
-                if organise_new:
+                recovering = organise_new and any(job["state"] not in {"complete", "superseded"}
+                    and may_prepare(job["source"]) for job in organiser.data["jobs"].values())
+                if recovering:
                     import_errors = organiser.recover(cancelled, may_prepare)
-                files = [path for path in self.discover() if not organiser.pending_destination(self.media_name(path))]
+                    files = self.discover()
+                pending = {job["destination"] for job in organiser.data["jobs"].values() if job["state"] != "complete"}
+                files = [path for path in files if self.media_name(path) not in pending]
             present = {self.media_name(path) for path in files}
             used, updated, errors = set(), [], import_errors
+            checkpoint_dirty = False
             def checkpoint(final=False):
                 remaining = [dict(item, missing=item.get("file") not in present) if final else item for item in old if item["id"] not in used]
                 data.update(version=2, next_id=next_id, videos=updated + remaining)
@@ -317,10 +323,16 @@ class Catalogue:
                     try:
                         stat = path.stat()
                         previous = by_file.get(rel)
-                        source = str(path.resolve())
-                        same = previous and previous.get("scan_source") == source and previous.get("size") == stat.st_size and previous.get("modified_ns") == stat.st_mtime_ns
+                        source = rel if rel.startswith("Adverts/") or not external else str(path.resolve())
+                        def unchanged(entry):
+                            saved_source = str(entry.get("scan_source", "")).replace("\\", "/")
+                            # Bundled media travels with its catalogue. Accept older
+                            # absolute cache paths even after a USB drive-letter change.
+                            same_source = saved_source == source or (source == rel and saved_source.endswith("/" + rel))
+                            return same_source and entry.get("size") == stat.st_size and entry.get("modified_ns") == stat.st_mtime_ns
+                        same = previous and unchanged(previous)
                         cached = cache.get(rel, {})
-                        cached_same = cached.get("scan_source") == source and cached.get("size") == stat.st_size and cached.get("modified_ns") == stat.st_mtime_ns
+                        cached_same = unchanged(cached)
                         fingerprint = previous.get("fingerprint") if same else cached.get("fingerprint") if cached_same else None
                         if not fingerprint:
                             digest = hashlib.sha256()
@@ -342,7 +354,7 @@ class Catalogue:
                             imported_rel = self.media_name(path)
                             present.discard(rel); present.add(imported_rel)
                             rel = imported_rel
-                            stat = path.stat(); source = str(path.resolve())
+                            stat = path.stat(); source = rel if rel.startswith("Adverts/") or not external else str(path.resolve())
                             cached_same = False; cached = {}
                             # A recovered conversion can have a prior catalogue entry
                             # for its original container. Carry those labels across.
@@ -392,6 +404,7 @@ class Catalogue:
                         used.add(item["id"])
                         item.update(file=rel, scan_source=source, size=stat.st_size, modified_ns=stat.st_mtime_ns, fingerprint=fingerprint, missing=False)
                         updated.append(item)
+                        checkpoint_dirty |= item != previous
                         if new:
                             baseline["videos"].append(json.loads(json.dumps(item)))
                         if not same and not cached_same:
@@ -407,8 +420,9 @@ class Catalogue:
                         raise
                     except (OSError, ValueError) as error:
                         errors.append({"file": rel, "error": str(error)})
-                    if (index + 1) % 25 == 0:
+                    if checkpoint_dirty and (index + 1) % 25 == 0:
                         checkpoint()
+                        checkpoint_dirty = False
                     progress(completed=index+1, total=len(files), errors=errors)
                 result = checkpoint(final=True)
                 # Compact only after a changed scan, keeping the journal bounded.

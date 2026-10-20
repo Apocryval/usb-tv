@@ -44,7 +44,7 @@ test('balanced trial reduces loud files, boosts quiet files moderately and respe
   assert.equal(gainFor(loud),gainFor(loud,true,'standard'));
 });
 
-test('guide preview and full player share levelling and volume but keep independent tracks and mute',()=>{
+test('guide preview and full player share levelling and volume but keep independent tracks and mute',async()=>{
   function video() {
     const listeners=new Map();
     return {volume:1,muted:false,addEventListener(name,fn){listeners.set(name,fn);},emit(name){listeners.get(name)?.();}};
@@ -62,6 +62,8 @@ test('guide preview and full player share levelling and volume but keep independ
   vm.runInNewContext(fs.readFileSync(require.resolve('../web/audio.js'),'utf8'),{window,document});
   const api=window.USBTvAudio,clip=item(-9);
   api.setTrack(clip,preview);api.setTrack(clip);
+  assert.equal(sources,0,'suspended audio must not capture either media element');
+  api.unlock(); await Promise.resolve();
   assert.equal(contexts,1);assert.equal(sources,2);
   assert.equal(routes.get(player).gain.value,gainFor(clip));
   assert.equal(routes.get(preview).gain.value,gainFor(clip));
@@ -82,7 +84,7 @@ test('guide preview and full player share levelling and volume but keep independ
   assert.equal(routes.get(player).gain.value,gainFor(clip));
   assert.equal(routes.get(preview).gain.value,gainFor(item(6)));
   assert.equal(sources,2,'toggling does not create duplicate media sources');
-  assert.equal(api.suspended(),true);preview.emit('play');assert.equal(api.suspended(),false);
+  assert.equal(api.suspended(),false);preview.emit('play');assert.equal(sources,2);
 });
 
 test('live guide supplies saved audio measurements even when its schedule snapshot omits them',()=>{
