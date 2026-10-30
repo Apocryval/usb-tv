@@ -53,3 +53,37 @@ test('Chaos advances whole files independently of the schedule and stops after a
   assert.match(get('#player-meta').textContent,/None of these files/);
   context.state.playback={mode:'channel'};context.advanceChaos();assert.equal(get('#player').loads,loads);
 });
+
+test('playlist jumps retain the exact queue, skipped entries, and backward/forward navigation',()=>{
+  const videos=['a','b','c','d','e'].map(id=>({id,file:`Videos/${id}.mp4`,duration:60}));
+  const playback={mode:'chaos',queue:videos.slice(),index:-1,id:null,trail:[],trailIndex:-1,failures:0};
+  const nodes=new Map();
+  const get=key=>{if(!nodes.has(key))nodes.set(key,{dataset:{},load(){},play(){return Promise.resolve();}});return nodes.get(key);};
+  const context={state:{playback},$:get,closeQuickLabels(){},updatePlaybackControls(){},displayTitle:v=>v.id,
+    formatDuration:()=>'',videoUrl:f=>f,showToast(){},window:{},crypto:require('node:crypto').webcrypto};
+  vm.runInNewContext(functions+source.slice(source.indexOf('function chaosPlaylist('),source.indexOf("$('#chaos-button').addEventListener")),context);
+  const ids=()=>Array.from(context.chaosPlaylist(playback),v=>v.id);
+  context.advanceChaos();
+  assert.deepEqual(ids(),['a','b','c','d','e']);
+  context.jumpChaos(3);
+  assert.equal(playback.id,'d');assert.equal(playback.index,3);
+  assert.deepEqual(Array.from(playback.trail,v=>v.id),['a','b','c','d']);
+  assert.deepEqual(ids(),['a','b','c','d','e']);
+  context.previousChaos();assert.equal(playback.id,'c');
+  context.jumpChaos(0);assert.equal(playback.id,'a');assert.equal(playback.index,3);
+  context.advanceChaos();assert.equal(playback.id,'b');
+  context.jumpChaos(4);assert.equal(playback.id,'e');
+  assert.deepEqual(ids(),['a','b','c','d','e']);
+  for(const invalid of [-1,5,NaN,1.5,'2'])context.jumpChaos(invalid);
+  assert.equal(playback.id,'e');
+  get('#quick-label-panel').dataset.saving='true';context.jumpChaos(0);assert.equal(playback.id,'e');
+  get('#quick-label-panel').dataset.saving='false';
+  context.advanceChaos();
+  assert.equal(context.chaosPlaylist(playback).length,10,'completed history remains available alongside the new cycle');
+  const queueOrder=playback.queue.map(v=>v.id).join();
+  context.jumpChaos(2);assert.equal(playback.id,'c');
+  context.jumpChaos(9);assert.equal(playback.index,4);
+  assert.equal(playback.queue.map(v=>v.id).join(),queueOrder,'jumping never reshuffles');
+  context.state.playback={mode:'channel'};context.jumpChaos(0);
+  assert.equal(context.chaosPlaylist(context.state.playback).length,0);
+});

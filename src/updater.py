@@ -23,7 +23,7 @@ def application_file(name):
         return True  # Explicitly bundled theme artwork, fonts and licences.
     if len(parts) == 1:
         return (PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"}
-                or name in {"requirements-build.txt", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
+                or name in {"sync-videos.sh", "sync-videos.command", "Sync Videos.bat", "requirements-build.txt", "start-usbtv.sh", "start-usbtv.command", "Start USB.tv.bat",
                             "update-usbtv.sh", "update-usbtv.command", "Update USB.tv.bat"})
     if len(parts) >= 2 and parts[0] in {"src", "web", "scripts", "docs"}:
         return PurePosixPath(name).suffix.lower() in {".py", ".js", ".css", ".html", ".ico", ".md"} or name == "scripts/requirements-build.txt"

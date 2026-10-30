@@ -11,7 +11,7 @@ import uuid
 
 from media import convert_mp4
 
-RESERVED_FOLDERS = {".usbtv-originals", ".usbtv-imports"}
+RESERVED_FOLDERS = {".usbtv-originals", ".usbtv-imports", ".usbtv-sync"}
 REFERENCE = re.compile(r"^(\d{4,}) - (.+)$")
 
 

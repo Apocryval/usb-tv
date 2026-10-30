@@ -92,3 +92,13 @@ test('bulk manipulation updates only selected previews and clears pending contro
   assert.equal(JSON.stringify(rows[1]),unselected);assert.equal(JSON.stringify(videos),before);
   assert.equal(get('#bulk-tags').value,'');assert.equal(get('#bulk-enabled').value,'');assert.equal(rendered,1);
 });
+
+test('playback checks can be isolated in metadata filters without changing catalogue entries',()=>{
+  const rows=[{id:'bad',playback_check:{status:'error',issues:[{message:'Decode failed'}]}},
+    {id:'codec',playback_check:{status:'warning',issues:[{message:'Dolby audio'}]}},
+    {id:'okay',playback_check:{status:'checked',issues:[]}}, {id:'old'}];
+  const before=JSON.stringify(rows);
+  assert.deepEqual(ids(S.filterMedia(rows,{status:'playback-issues'})),['bad','codec']);
+  assert.deepEqual(ids(S.filterMedia(rows,{status:'playback-errors'})),['bad']);
+  assert.equal(JSON.stringify(rows),before);
+});

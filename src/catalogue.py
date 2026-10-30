@@ -13,6 +13,7 @@ import sys
 import time
 from media import inspect_media, number, suggest_breaks, tool_path, measure_loudness, LOUDNESS_VERSION
 from titles import title_from_path
+from media_health import check_playback, check_current
 from imports import ImportManager, RESERVED_FOLDERS
 
 EXTENSIONS = {".mp4", ".m4v", ".webm", ".ogv", ".mov", ".mkv", ".avi",
@@ -375,7 +376,7 @@ class Catalogue:
                             item["duration"] = metadata.get("duration", 0)
                             item["technical"] = metadata.get("technical", {})
                             if not item.get("title") and item.get('title_source') != 'manual' and str(metadata.get("title", '')).strip():
-                                item["title"] = metadata["title"][:300]
+                                item["title"] = str(metadata["title"]).strip()[:300]
                                 item['title_source'] = 'embedded'
                             if not item.get("genres") and metadata.get("genre"):
                                 item["genres"] = [metadata["genre"][:100]]
@@ -396,6 +397,14 @@ class Catalogue:
                             if generated:
                                 item['title'] = generated
                                 item['title_source'] = 'filename'
+                        decode_available = bool(tool_path("ffmpeg", self.root))
+                        saved_check = item.get("playback_check") or (cached.get("playback_check") if cached_same else None)
+                        if not check_current(saved_check, fingerprint, decode_available):
+                            progress(stage="playback", completed=index, total=len(files), current=rel)
+                            check_metadata = metadata or {"duration":item.get("duration",0), "technical":item.get("technical",{})}
+                            item["playback_check"] = check_playback(path, self.root, check_metadata, fingerprint, cancelled)
+                        else:
+                            item["playback_check"] = saved_check
                         after = path.stat()
                         if (after.st_size, after.st_mtime_ns) != (stat.st_size,stat.st_mtime_ns):
                             raise ValueError("File is still changing/copying; it will be retried on the next scan")
@@ -408,7 +417,7 @@ class Catalogue:
                         if new:
                             baseline["videos"].append(json.loads(json.dumps(item)))
                         if not same and not cached_same:
-                            entry = {"file": rel, "scan_source": source, "size": stat.st_size, "modified_ns": stat.st_mtime_ns, "fingerprint": fingerprint, "metadata": metadata}
+                            entry = {"file": rel, "scan_source": source, "size": stat.st_size, "modified_ns": stat.st_mtime_ns, "fingerprint": fingerprint, "metadata": metadata, "playback_check": item.get("playback_check")}
                             # Append small records immediately; no full catalogue rewrite per file.
                             with cache_path.open("a", encoding="utf-8") as handle:
                                 handle.write("\n" + json.dumps(entry,ensure_ascii=False) + "\n")

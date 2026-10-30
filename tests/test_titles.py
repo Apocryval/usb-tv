@@ -51,3 +51,14 @@ class TitleTests(unittest.TestCase):
                 item=catalog.scan()['videos'][0]
                 self.assertEqual(item['title'],'Official title')
                 self.assertEqual(item['title_source'],'embedded')
+
+    def test_probe_uses_video_stream_title_when_container_title_is_blank(self):
+        import json
+        from types import SimpleNamespace
+        from media import inspect_media
+        for container_title, expected in [('  ', 'Stream title'), (' Container title ', 'Container title')]:
+            probe = {'format': {'duration': '60', 'tags': {'TITLE': container_title}},
+                     'streams': [{'codec_type': 'audio', 'tags': {'title': 'English'}},
+                                 {'codec_type': 'video', 'tags': {'TITLE': ' Stream title '}}]}
+            with patch('media.tool_path', return_value='ffprobe'), patch('media.subprocess.run', return_value=SimpleNamespace(stdout=json.dumps(probe))):
+                self.assertEqual(inspect_media(Path('show.mkv'), Path('.'))['title'], expected)

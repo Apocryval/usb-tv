@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400" viewBox="0 0 500 400">
+  <defs>
+    <linearGradient id="wood" x2="0" y2="1"><stop stop-color="#84603e"/><stop offset=".5" stop-color="#493322"/><stop offset="1" stop-color="#765237"/></linearGradient>
+    <linearGradient id="metal" x2="1" y2="1"><stop stop-color="#a9966d"/><stop offset=".5" stop-color="#4f4837"/><stop offset="1" stop-color="#93805c"/></linearGradient>
+    <pattern id="speaker" width="8" height="9" patternUnits="userSpaceOnUse"><path d="M0 4h8" stroke="#161510" stroke-width="4"/></pattern>
+  </defs>
+  <rect x="3" y="3" width="494" height="394" rx="24" fill="url(#wood)" stroke="#281e16" stroke-width="6"/>
+  <path d="M24 12h438M18 23h390M18 377h455M30 386h420" stroke="#b08a57" opacity=".4" stroke-width="2"/>
+  <rect x="22" y="22" width="399" height="344" rx="24" fill="#211e17" stroke="url(#metal)" stroke-width="12"/>
+  <rect x="432" y="25" width="49" height="339" rx="9" fill="url(#metal)" stroke="#322b20" stroke-width="3"/>
+  <g fill="#352e23" stroke="#b09a6d" stroke-width="3">
+    <circle cx="456" cy="65" r="19"/><circle cx="456" cy="119" r="19"/>
+  </g>
+  <path d="m450 77 12-24m-16 66h20" stroke="#d3bd8b" stroke-width="5"/>
+  <rect x="440" y="162" width="33" height="179" rx="3" fill="url(#speaker)"/>
+  <circle cx="456" cy="353" r="4" fill="#db9b45"/>
+  <path d="M47 382h86m265 0h49" stroke="#201b14" stroke-width="9" stroke-linecap="round"/>
+</svg>

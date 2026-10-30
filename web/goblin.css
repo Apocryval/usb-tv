@@ -386,11 +386,6 @@ body[data-theme="goblin"] .nav-tabs .tab.active {filter:drop-shadow(0 0 3px #c2d
 body[data-theme="goblin"] .nav-tabs button:focus-visible,
 body[data-theme="goblin"] #player-dialog button:focus-visible {outline:2px solid #d8d88d;outline-offset:-5px}
 body[data-theme="goblin"] .nav-tabs #settings-toggle {padding:10px 13px;min-width:42px}
-/* Keep the existing video sizing, overlays and fullscreen behaviour. */
-body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) {
-  border:7px ridge #756047;border-radius:12px;background:#11190f;
-  box-shadow:inset 0 0 14px #0009,0 20px 70px #000c;
-}
 body[data-theme="goblin"] #player-dialog .player-top {
   background:linear-gradient(#151d11ed,#151d11cc,transparent);min-height:58px;height:auto;padding:8px 12px;gap:10px;
 }
@@ -495,3 +490,54 @@ body[data-theme="goblin"] .channel-card::before {
 }
 body[data-theme="goblin"] .channel-card:nth-child(3n) .channel-name {transform:rotate(-.5deg)}
 @media(max-width:760px) {body[data-theme="goblin"] .channel-card .channel-name {font-size:25px}}
+
+/* One illustration at its native aspect ratio: hardware never stretches with video.
+   The screen wrapper lines up with the transparent opening in the painted cabinet. */
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) {
+  width:min(1200px,96vw,141dvh);aspect-ratio:3 / 2;
+  height:auto;max-height:94dvh;padding:0;border:0;border-radius:0;
+  background:transparent;box-shadow:none;overflow:hidden;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen)::before {
+  content:"";position:absolute;inset:0;z-index:2;pointer-events:none;
+  background:url('goblin-player-cabinet.png') center / contain no-repeat;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-screen {
+  display:block;position:absolute;inset:32% 18.5% 19% 13.6%;z-index:1;
+  overflow:hidden;border-radius:6% / 10%;background:#050505;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) #player {
+  width:100%;height:100%;max-height:none;aspect-ratio:auto;object-fit:contain;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top {
+  background:linear-gradient(#16130feb,transparent);color:#eadbb6;
+  padding:10px 28px;gap:12px;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .playback-controls {
+  background:linear-gradient(transparent,#211a13f2 30%);
+  max-height:75%;overflow:auto;box-sizing:border-box;
+  padding:14px 28px 22px;overflow-x:hidden;
+}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-transport,
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-audio {gap:6px}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-transport button:not([hidden]) {padding:10px 14px}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top>div:first-child {min-width:0;flex:1}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) #player-status {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-actions {flex-shrink:0}
+@media(max-width:600px) {
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top {
+    position:absolute;inset:0 0 auto;flex-direction:row;align-items:center;
+    min-height:0;opacity:1;pointer-events:auto;padding:6px 14px;
+  }
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-top>div:first-child {display:none}
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-actions {width:100%;gap:2px;flex-wrap:nowrap}
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .player-actions button:not([hidden]) {
+    min-width:26px;min-height:30px;padding:4px 6px;font-size:12px;
+  }
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) .playback-controls {
+    position:absolute;inset:auto 0 0;opacity:1;pointer-events:auto;max-height:65%;padding:8px 14px 14px;
+  }
+  body[data-theme="goblin"] #player-dialog:not(.video-fills-screen):not(:fullscreen) #quick-label-panel {
+    inset:0;width:100%;max-height:100%;margin:0;
+  }
+}

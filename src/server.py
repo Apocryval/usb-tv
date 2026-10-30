@@ -2,7 +2,7 @@
 """Local UI/API and seekable USB media server. No runtime dependencies."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 import argparse
 import errno
 import json
@@ -20,10 +20,12 @@ import webbrowser
 import zipfile
 from catalogue import Catalogue, CatalogueConflict
 from media import analyse_breaks
+from playback_audio import PlaybackAudio, cache_path
 from distribution import ASSETS
 from library_paths import data_directory
 from updater import install_update
 import broadcasts
+import video_sync
 from session import LibrarySession
 from imports import RESERVED_FOLDERS
 
@@ -37,11 +39,12 @@ SESSION = None
 SCANS = None
 ERROR_LOGGER = None
 WRITE_TOKEN = secrets.token_hex(32)
+AUDIO_JOBS_LOCK = threading.Lock()
 
 
 def client_disconnected(error):
     """Video seeks and channel changes routinely cancel in-flight HTTP responses."""
-    return isinstance(error, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)) or (
+    return isinstance(error, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)) or (
         isinstance(error, OSError) and (error.errno in (errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED)
                                       or getattr(error, "winerror", None) in (10053, 10054, 10058)))
 
@@ -234,6 +237,12 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def audio_jobs(self):
+        with AUDIO_JOBS_LOCK:
+            if not hasattr(self.server, 'playback_audio'):
+                self.server.playback_audio = PlaybackAudio(LIBRARY)
+            return self.server.playback_audio
+
     def media_response(self, route, head=False):
         relative = Path(unquote(route.lstrip("/")))
         if not relative.parts or relative.parts[0] not in ("Videos", "Adverts"):
@@ -246,6 +255,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error(404)
         if not target.is_file():
             return self.send_error(404)
+        if parse_qs(urlparse(self.path).query).get('audio') == ['compatible']:
+            prepared = cache_path(LIBRARY.root, target)
+            if not prepared.is_file():
+                return self.send_error(404, 'Prepare compatible audio before playing this copy')
+            target = prepared
         try:
             with target.open("rb") as media:
                 size = target.stat().st_size
@@ -314,8 +328,16 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if route == "/api/write-token":
                 return self.send_json({"token": WRITE_TOKEN})
+            if route == "/api/sync-exclusions":
+                return self.send_json({**video_sync.registry(LIBRARY.video_root), "folder": str(LIBRARY.video_root)})
             if route == "/api/video-folder":
                 return self.send_json(LIBRARY.folder_status())
+            if route == "/api/playback-audio":
+                media_id = parse_qs(urlparse(self.path).query).get('id', [''])[0]
+                try:
+                    return self.send_json(self.audio_jobs().status(media_id))
+                except ValueError as error:
+                    return self.send_json({"error": str(error)}, 400)
             if route == "/api/audio":
                 return self.send_json(LIBRARY.audio_status())
             if route == "/api/catalog":
@@ -353,7 +375,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
             return self.send_error(503, "USB.tv is restarting")
-        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan", "/api/video-folder"):
+        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan", "/api/video-folder", "/api/sync-exclusions", "/api/playback-audio"):
             return self.send_error(404)
         if (self.headers.get_content_type() != "application/json"
                 or not hmac.compare_digest(self.headers.get("X-USBtv-Write", "").encode(), WRITE_TOKEN.encode())):
@@ -365,6 +387,29 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Expected an object")
+            if route == "/api/playback-audio":
+                return self.send_json(self.audio_jobs().prepare(data.get("id")))
+            if route == "/api/sync-exclusions":
+                with LIBRARY.lock:
+                    if SCANS and SCANS.thread and SCANS.thread.is_alive():
+                        raise ValueError("Pause the scan before changing USB removals.")
+                    root = LIBRARY.video_root
+                    action = data.get("action", "mark")
+                    if action == "mark":
+                        item = next((item for item in LIBRARY.read()["videos"] if item["id"] == data.get("id")), None)
+                        if not item or not item.get("file", "").startswith("Videos/"):
+                            raise ValueError("Choose a video in the Videos folder")
+                        relative = item["file"][7:]
+                    elif action != "undo":
+                        raise ValueError("Choose mark or undo")
+                # Large checksums must not block catalogue reads or playback.
+                if action == "undo":
+                    if not isinstance(data.get("key"), str) or type(data.get("revision")) is not int:
+                        raise ValueError("Refresh the removal list before undoing.")
+                    video_sync.undo_exclusion(root, data.get("key"), data.get("revision"))
+                else:
+                    video_sync.exclude(root, relative)
+                return self.send_json({**video_sync.registry(root), "folder": str(root)})
             if route == "/api/video-folder":
                 if SCANS and SCANS.thread and SCANS.thread.is_alive():
                     raise ValueError("Wait for the scan to finish, or pause it before changing folders.")
@@ -458,6 +503,8 @@ def main():
             finally:
                 server.stopping.set()
                 SCANS.close()
+                if hasattr(server, "playback_audio"):
+                    server.playback_audio.close()
                 server.server_close()
                 print("USB.tv server stopped. Eject the drive safely before unplugging it.", flush=True)
     except KeyboardInterrupt:

@@ -59,7 +59,7 @@ const palette = ["#c7f36b", "#69b9ff", "#ff6f91", "#bc9bff", "#ffc56f", "#70e0c0
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-const videoUrl = (file) => "/" + file.split("/").map(encodeURIComponent).join("/");
+const videoUrl = (file) => "/" + file.split("/").map(encodeURIComponent).join("/") + (globalThis.USBTvCompatibleAudio?.query(file) || "");
 
 function formatDuration(value) {
   const seconds = Math.max(0, Math.floor(Number(value) || 0));
@@ -117,6 +117,7 @@ async function loadVideoFolder() {
     const response = await apiFetch('/api/video-folder', {cache:'no-store'});
     if (!response.ok) throw new Error('Restart USB.tv with the latest Windows build to choose a video folder.');
     showVideoFolder(await response.json());
+    void loadSyncExclusions();
   } catch (error) {
     $('#video-folder-status').textContent = error.message;
     $('#video-folder-save').disabled = true;
@@ -189,6 +190,7 @@ function setPage(pageName) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.page === pageName));
   document.querySelectorAll(".page").forEach((page) => page.classList.toggle("active", page.id === `page-${pageName}`));
   syncGuidePreview();
+  if (pageName === 'collection') { renderCollection(); void loadSyncExclusions(); }
 }
 
 let cinemaHideTimer = null, cinemaNative = false;
@@ -209,7 +211,7 @@ function revealPlayerControls() {
   dialog.classList.add("controls-visible");
   clearTimeout(cinemaHideTimer);
   cinemaHideTimer = setTimeout(()=>{
-    if (!$("#quick-label-panel").hidden || state.playback?.loaded && $('#player').paused || dialog.querySelector('.player-top:hover,.playback-controls:hover') || dialog.querySelector('input:focus')) return;
+    if (!$("#quick-label-panel").hidden || state.playback?.loaded && $('#player').paused || dialog.querySelector('.player-top:hover,.playback-controls:hover') || dialog.querySelector('input:focus') || $('#playback-notice')?.hidden === false) return;
     dialog.classList.remove("controls-visible");
   },2500);
 }
@@ -274,6 +276,9 @@ for (const name of ["fullscreenchange","webkitfullscreenchange"]) document.addEv
 $("#player-dialog").addEventListener("pointermove",revealPlayerControls);
 $("#player-dialog").addEventListener("pointerdown",handlePlayerPointerDown);
 window.addEventListener("keydown",event=>{
+  if (event.key === "Escape" && globalThis.USBTvPlaylist?.closeIfOpen()) {
+    event.preventDefault(); event.stopImmediatePropagation(); return;
+  }
   if (event.key === "Escape" && videoFillsScreen() && $("#quick-label-panel").hidden) {
     event.preventDefault();event.stopImmediatePropagation();exitVideoView();
   } else if ($('#player-dialog').open && event.key==='Tab') revealPlayerControls();
@@ -301,12 +306,14 @@ function updatePlaybackControls() {
   $("#playback-volume").value = player.volume;
   const progress=playerProgress();
   $("#playback-time").textContent = `${stamp(progress.value-progress.min)} / ${progress.max>progress.min ? stamp(progress.max-progress.min) : "—"}`;
+  globalThis.USBTvPlaylist?.sync();
+  globalThis.USBTvCompatibleAudio?.sync();
   const browsing = ['channel','replay','chaos'].includes(state.playback?.mode);
   $('#programme-previous').hidden = !browsing;
   $('#programme-restart').hidden = !browsing;
   $('#programme-previous').disabled = state.playback?.mode==='chaos' && !(state.playback.trailIndex>0);
   $('#programme-next').hidden = !['replay','chaos'].includes(state.playback?.mode);
-  $('#programme-next').title = state.playback?.mode==='chaos'?'Skip to the next Chaos video':'Watch the next programme or catch up to live';
+  $('#programme-next').title = state.playback?.mode==='chaos'?'Skip to the next Wow:Classique video':'Watch the next programme or catch up to live';
   $('#return-live').hidden = state.playback?.mode !== 'replay';
   $('#admin-playback-controls').hidden = !adminPlaybackEnabled() || state.playback?.mode !== 'channel';
   $('#call-network').hidden = !state.catalog.settings?.advanced_mode || state.playback?.mode !== 'channel';
@@ -517,7 +524,7 @@ function timeline(channel) {
   return state.timelines.get(channel);
 }
 function reviewReasons(video) {
-  return [!video.title?.trim() && "Needs title", video.title_source === "filename" && "Auto title — review", !(video.duration > 0) && "Unreadable length / codec", !["advert","bumper"].includes(video.type) && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (!["advert","bumper"].includes(video.type) && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
+  return [...playbackIssues(video).map(message=>`Playback: ${message}`), !video.title?.trim() && "Needs title", video.title_source === "filename" && "Auto title — review", !(video.duration > 0) && "Unreadable length / codec", !["advert","bumper"].includes(video.type) && !video.channels?.length && "Choose channels", !video.genres?.length && "Choose genres", (!["advert","bumper"].includes(video.type) && video.duration > 3000 && !["single", "multiple"].includes(video.episode_review)) && "Possibly multi-episode (over 50 min)", video.duplicate_of && `Duplicate of #${video.duplicate_of}`, video.missing && "Missing file"].filter(Boolean);
 }
 function guideMinutes() {
   const value = Number(state.catalog.settings?.guide_minutes ?? 120);
@@ -796,7 +803,7 @@ function resetMediaFilters(prefix, render=true) {
 function filteredLibrary() {
   const filter = $("#library-filter").value;
   const scope=state.catalog.videos.filter(video => filter === "missing" ? video.missing : !video.missing &&
-    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "unassigned" && unassigned(video) || video.type === filter));
+    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "playback" && playbackIssues(video).length || filter === "failed-playback" && video.playback_check?.status === "error" || filter === "unassigned" && unassigned(video) || video.type === filter));
   return USBTvSuggestions.filterMedia(scope,mediaFilters('library'));
 }
 function pageItems(items, prefix, view) {
@@ -899,7 +906,7 @@ function renderChannels() {
     button.addEventListener('click',()=>deleteChannel(button.dataset.deleteChannel));
   });
 }
-function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); }
+function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); renderCollection(); }
 let bulkRows = [];
 function bulkRowsForScope() {
   const scope = $("#bulk-scope").value;
@@ -1176,6 +1183,9 @@ function openEditor(id, draft = null) {
     for (const key of ['title','type','bumper_role','genres','channels','tags','enabled','description','tagline','tagline_goblin','break_points','breaks_approved','episode_review','episodes']) video[key] = structuredClone(draft[key]);
   }
   state.editing = structuredClone(video);
+  $("#exclude-from-usb").disabled = Boolean(video.missing) || !video.file.startsWith("Videos/");
+  $("#sync-exclusion-status").textContent = "";
+  loadSyncExclusions();
   $("#editor-heading").textContent = `Edit media #${video.id}`;
   $("#editor-file").textContent = video.file;
   $("#edit-title").value = video.title || "";
@@ -1196,7 +1206,7 @@ function openEditor(id, draft = null) {
   $("#edit-tagline-goblin").value = video.tagline_goblin || "";
   $("#editor-error").textContent = "";
   const technical = video.technical || {};
-  $("#editor-technical").textContent = [formatDuration(video.duration), technical.width && `${technical.width}×${technical.height}`, technical.video_codec, technical.audio_codec, video.size && `${(video.size/1048576).toFixed(1)} MB`, video.added_at && `Added ${new Date(video.added_at).toLocaleDateString()}`].filter(Boolean).join(" · ");
+  $("#editor-technical").textContent = [formatDuration(video.duration), technical.width && `${technical.width}×${technical.height}`, technical.video_codec, technical.audio_codec, ...playbackIssues(video), video.size && `${(video.size/1048576).toFixed(1)} MB`, video.added_at && `Added ${new Date(video.added_at).toLocaleDateString()}`].filter(Boolean).join(" · ");
   $("#preview-media").disabled = Boolean(video.missing);
   $("#break-editor").hidden = video.type !== "programme";
   renderChoices(); renderSuggestions();
@@ -1425,7 +1435,7 @@ function enterChannelDigit(digit) {
 // Channel controls also work in browser/window fullscreen, which may not set
 // document.fullscreenElement. Capture at window before video control handlers.
 window.addEventListener("keydown", event => {
-  if (!$("#quick-label-panel").hidden) return;
+  if (!$("#quick-label-panel").hidden || event.target?.closest?.('.wow-playlist')) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
   const seeking = document.activeElement === $('#preview-seek') && ['ArrowLeft','ArrowRight'].includes(event.key);
   if (!seeking && document.activeElement?.closest('input,textarea,select,[contenteditable="true"]') ||
@@ -1531,7 +1541,7 @@ function chaosTransition() {
     particle.style.setProperty('--hue',String(i*360/28));
     overlay.append(particle);
   }
-  const title=document.createElement('strong');title.textContent='CHAOS';overlay.append(title);
+  const title=document.createElement('strong');title.textContent='Wow:Classique';overlay.append(title);
   overlay.hidden=false;
   // Locally synthesised pitch dive and noise burst; no audio file or network needed.
   const player=$('#player'), AudioContext=window.AudioContext||window.webkitAudioContext;
@@ -1554,7 +1564,7 @@ function chaosTransition() {
 function startChaos() {
   if (!state.catalog.settings?.advanced_mode || $('#quick-label-panel').dataset.saving==='true') return;
   const queue=shuffleChaos(state.catalog.videos);
-  if (!queue.length) {showToast('Add some videos before unleashing chaos.');return;}
+  if (!queue.length) {showToast('Add some videos before starting Wow:Classique.');return;}
   closeQuickLabels();clearChannelEntry();
   state.playback={mode:'chaos',queue,index:-1,id:null,failures:0,trail:[],trailIndex:-1};
   $('#channel-down').hidden=true;$('#channel-up').hidden=true;$('#return-live').hidden=true;
@@ -1572,12 +1582,30 @@ function startChaos() {
   }
   chaosTransition();advanceChaos();
 }
+// The visible playlist is played history followed by the untouched queue.
+function chaosPlaylist(playback) {
+  if (playback?.mode !== 'chaos') return [];
+  return [...(playback.trail || []), ...playback.queue.slice(playback.index + 1)];
+}
+function jumpChaos(position) {
+  const playback = state.playback;
+  if (playback?.mode !== 'chaos' || $('#quick-label-panel').dataset.saving === 'true') return;
+  const entries = chaosPlaylist(playback);
+  if (!Number.isInteger(position) || position < 0 || position >= entries.length) return;
+  closeQuickLabels();
+  playback.trail ||= [];
+  // Consume skipped entries in order so Previous/Next can retrace every item.
+  while (playback.trail.length <= position) playback.trail.push(playback.queue[++playback.index]);
+  playback.trailIndex = position;
+  playback.failures = 0;
+  showChaosVideo(playback, playback.trail[position]);
+}
 function advanceChaos(failed = false) {
   const playback=state.playback;
   if (playback?.mode!=='chaos' || $('#quick-label-panel').dataset.saving==='true') return;
   if (failed && ++playback.failures>=playback.queue.length) {
-    $('#player-meta').textContent='None of these files could be played. Close Chaos and check the files.';
-    showToast('Chaos stopped: no playable files.');return;
+    $('#player-meta').textContent='None of these files could be played. Close Wow:Classique and check the files.';
+    showToast('Wow:Classique stopped: no playable files.');return;
   }
   if (!failed) playback.failures=0;
   closeQuickLabels();
@@ -1601,19 +1629,50 @@ function previousChaos() {
 }
 function showChaosVideo(playback,video) {
   playback.id=video.id;playback.loaded=false;
-  $('#player-status').textContent=`CHAOS · ${playback.queue.length} VIDEOS`;
+  $('#player-status').textContent=`Wow:Classique · ${playback.queue.length} VIDEOS`;
   $('#player-title').textContent=displayTitle(video);
-  $('#player-meta').textContent=`${formatDuration(video.duration)} · Everything shuffled · No scheduled breaks`;
+  $('#player-meta').textContent=formatDuration(video.duration);
   const player=$('#player');
   player.onloadedmetadata=()=>{
     if(state.playback!==playback || playback.id!==video.id)return;
     player.currentTime=0;playback.loaded=true;
-    player.play().catch(()=>{revealPlayerControls();showToast('Press Play to start Chaos.');});
+    player.play().catch(()=>{revealPlayerControls();showToast('Press Play to start Wow:Classique.');});
   };
   window.USBTvAudio?.setTrack(video);
   player.src=videoUrl(video.file);player.load();updatePlaybackControls();
 }
 $('#chaos-button').addEventListener('click',startChaos);
+function retryStalledPlayback() {
+  const playback = state.playback, player = $('#player');
+  if (!playback || $('#quick-label-panel').dataset.saving === 'true') return;
+  const position = player.currentTime, source = player.src;
+  playback.failed = false; playback.loaded = false;
+  player.addEventListener('loadedmetadata', () => {
+    if (state.playback !== playback || player.src !== source) return;
+    if (playback.mode !== 'channel') seekToLive(position, player);
+    player.play().catch(() => { revealPlayerControls(); showToast('Press Play to retry this video.'); });
+  }, {once:true});
+  player.load(); revealPlayerControls();
+}
+globalThis.USBTvPlaybackHealth?.configure({
+  getPlayback: () => state.playback, retry: retryStalledPlayback, reveal: revealPlayerControls
+});
+globalThis.USBTvCompatibleAudio?.configure({
+  api: apiFetch, url: videoUrl,
+  record: file => state.catalog.videos.find(video=>video.file===file),
+  getVideo() {
+    const playback = state.playback;
+    const item = ['preview','chaos'].includes(playback?.mode) ? state.catalog.videos.find(v=>v.id===playback.id)
+      : playback?.mode === 'channel' ? Schedule.locate(timeline(playback.channel))?.segment.video
+      : playback?.mode === 'replay' ? playback.current?.segment.video : null;
+    return state.catalog.videos.find(v=>v.id===item?.id) || item;
+  },
+  isLive: element => element.id === 'guide-preview-video' || state.playback?.mode === 'channel'
+});
+globalThis.USBTvPlaylist?.configure({
+  getPlayback: () => state.playback, entries: chaosPlaylist, select: jumpChaos,
+  title: displayTitle, duration: value => Number(value) > 0 ? stamp(value) : "—", url: videoUrl
+});
 function browseChannel(direction) {
   const playback=state.playback;
   if (!['channel','replay'].includes(playback?.mode) || $('#quick-label-panel').dataset.saving==='true') return;
@@ -1753,11 +1812,11 @@ function displayScan(job) {
   state.scanning = job.status === "running";
   const button = $("#rescan");
   button.disabled = state.scanning;
-  button.innerHTML = state.scanning ? `↻ <span>${job.stage === 'audio' ? 'AUDIO LEVELS' : job.stage === 'importing' ? 'PREPARING VIDEOS' : 'SCANNING'} ${job.completed || 0}/${job.total || "…"}</span>` : '↻ <span>RESCAN VIDEOS</span>';
+  button.innerHTML = state.scanning ? `↻ <span>${job.stage === 'playback' ? 'CHECKING PLAYBACK' : job.stage === 'audio' ? 'AUDIO LEVELS' : job.stage === 'importing' ? 'PREPARING VIDEOS' : 'SCANNING'} ${job.completed || 0}/${job.total || "…"}</span>` : '↻ <span>RESCAN VIDEOS</span>';
   $("#scan-progress").hidden = job.status === "idle";
   $("#scan-meter").max = Math.max(1,job.total || 0);
   $("#scan-meter").value = job.completed || 0;
-  $("#scan-message").textContent = state.scanning ? `${job.stage === "discovering" ? "Finding videos…" : job.stage === "audio" ? "Measuring audio levels" : job.stage === "importing" ? "Preparing new video" : "Scanning"} · ${job.completed || 0}/${job.total || "…"} · ${job.current || ""}` : `${job.status === "complete" ? "Scan complete" : job.status === "interrupted" ? "Scan paused — rescan to continue" : "Scan failed"} · ${job.completed || 0}/${job.total || 0}${job.error ? " · " + job.error : ""}${job.audio_note ? " · " + job.audio_note : ""}`;
+  $("#scan-message").textContent = state.scanning ? `${job.stage === "discovering" ? "Finding videos…" : job.stage === "playback" ? "Checking playback samples" : job.stage === "audio" ? "Measuring audio levels" : job.stage === "importing" ? "Preparing new video" : "Scanning"} · ${job.completed || 0}/${job.total || "…"} · ${job.current || ""}` : `${job.status === "complete" ? "Scan complete" : job.status === "interrupted" ? "Scan paused — rescan to continue" : "Scan failed"} · ${job.completed || 0}/${job.total || 0}${job.error ? " · " + job.error : ""}${job.audio_note ? " · " + job.audio_note : ""}`;
   $("#scan-pause").hidden = !state.scanning;
   $("#scan-errors").hidden = !job.error_count;
   $("#scan-error-text").textContent = (job.errors || []).map(item => `${item.file}: ${item.error}`).join("\n");
@@ -1989,6 +2048,7 @@ $("#player-dialog").addEventListener("close", () => {
   closeQuickLabels();
   clearChannelEntry();
   state.playback = null;
+  globalThis.USBTvPlaylist?.sync();
   const player = $("#player"); player.onloadedmetadata = null; player.pause(); player.removeAttribute("src"); player.load();
 });
 $("#player").addEventListener("pause", () => {
@@ -2009,7 +2069,7 @@ $("#player").addEventListener("error", () => {
   }
   if (state.playback.mode === 'chaos') {
     const playback=state.playback, id=playback.id;
-    showToast('Chaos skipped a file this browser cannot play.');
+    showToast('Wow:Classique skipped a file this browser cannot play.');
     setTimeout(()=>{if(state.playback===playback && playback.id===id)advanceChaos(true);},300);
     return;
   }
@@ -2117,3 +2177,110 @@ if (directFile) {
   // The guide is rebuilt on rescans and its clock tick. Release detached animations.
   new MutationObserver(refresh).observe(guide, {childList:true});
 })();
+
+// Collection browsing and persistent USB removal/undo history.
+let syncRemovalData = {videos:{}};
+let syncRemovalRequest = 0, syncRemovalBusy = false, collectionPage = 0;
+function removalFor(video) {
+  return video.file?.startsWith('Videos/') ? syncRemovalData.videos[video.fingerprint] : null;
+}
+function playbackIssues(video) {
+  return Array.isArray(video.playback_check?.issues) ? video.playback_check.issues.map(issue=>String(issue?.message || '')).filter(Boolean) : [];
+}
+function collectionMatches(videos, {query='', filter='available', genre='', sort='title'}={}) {
+  const search = query.trim().toLocaleLowerCase();
+  return videos.filter(video => {
+    const marked = removalFor(video)?.excluded === true;
+    if (filter === 'available' && video.missing || filter === 'marked' && !marked || filter === 'missing' && !video.missing) return false;
+    if (filter === 'playback' && (video.missing || !playbackIssues(video).length)) return false;
+    if (filter === 'failed-playback' && (video.missing || video.playback_check?.status !== 'error')) return false;
+    if (genre && !(video.genres || []).includes(genre)) return false;
+    return !search || [displayTitle(video),video.file,video.description,...video.tags||[]].join(' ').toLocaleLowerCase().includes(search);
+  }).sort((a,b) => sort === 'duration' ? (b.duration||0)-(a.duration||0) || displayTitle(a).localeCompare(displayTitle(b))
+    : sort === 'newest' ? String(b.added_at||'').localeCompare(String(a.added_at||'')) || displayTitle(a).localeCompare(displayTitle(b))
+    : displayTitle(a).localeCompare(displayTitle(b)));
+}
+function renderCollection() {
+  const genres = $('#collection-genre'), selected = genres.value;
+  genres.innerHTML = '<option value="">All genres</option>' + [...new Set(state.catalog.videos.flatMap(video => video.genres||[]))].sort().map(genre => `<option value="${esc(genre)}">${esc(genre)}</option>`).join('');
+  genres.value = selected;
+  const matches = collectionMatches(state.catalog.videos, {query:$('#collection-search').value, filter:$('#collection-filter').value, genre:genres.value, sort:$('#collection-sort').value});
+  const pages = Math.max(1,Math.ceil(matches.length/24));
+  collectionPage = Math.max(0,Math.min(collectionPage,pages-1));
+  const airtime = matches.reduce((sum,video)=>sum+(Number(video.duration)||0),0);
+  const length = airtime >= 3600 ? `${Math.round(airtime/360)/10} hours` : formatDuration(airtime);
+  $('#collection-summary').textContent = `${matches.length} ${matches.length===1?'video':'videos'} · ${length} total airtime`;
+  $('#collection-empty').hidden = matches.length > 0;
+  $('#collection-page').textContent = `Page ${collectionPage+1} of ${pages}`;
+  $('#collection-prev').disabled = collectionPage === 0;
+  $('#collection-next').disabled = collectionPage >= pages-1;
+  $('#collection-cards').innerHTML = matches.slice(collectionPage*24,(collectionPage+1)*24).map(video => {
+    const marked = removalFor(video)?.excluded === true;
+    const issues = playbackIssues(video);
+    return `<article class="collection-card"><span class="collection-status">${video.missing ? 'File missing' : issues.length ? 'Needs playback review' : 'Available'}${marked ? ' · Keep off USB' : ''}</span><h2>${esc(displayTitle(video))}</h2><p>${esc(video.type || 'programme')} · ${formatDuration(video.duration)}${video.enabled===false ? ' · Broadcast disabled' : ''}</p>${video.genres?.length ? `<p>${esc(video.genres.join(' · '))}</p>` : ''}${video.description ? `<p>${esc(video.description.slice(0,200))}</p>` : ''}${issues.length ? `<p class="collection-playback-check"><strong>Playback check:</strong> ${esc(issues.join(' · '))}</p>` : video.playback_check?.status === 'checked' ? '<p class="settings-note">Playback spot checks passed</p>' : ''}<details class="collection-file"><summary>File details</summary><p>${esc(video.file)}</p></details><div class="collection-actions"><button type="button" class="primary-button" data-watch-library="${esc(video.id)}" ${video.missing?'disabled':''}>WATCH</button><button type="button" class="media-edit" data-edit-library="${esc(video.id)}">EDIT LABELS</button>${marked ? `<button type="button" class="media-edit" data-undo-card="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>UNDO USB REMOVAL</button>` : ''}${video.file?.startsWith('Videos/') && !video.missing && !marked ? `<button type="button" class="media-edit" data-mark-library="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>KEEP OFF USB</button>`:''}</div></article>`;
+  }).join('');
+  $('#collection-cards').querySelectorAll('[data-watch-library]').forEach(button=>button.addEventListener('click',()=>previewVideo(button.dataset.watchLibrary)));
+  $('#collection-cards').querySelectorAll('[data-edit-library]').forEach(button=>button.addEventListener('click',()=>openEditor(button.dataset.editLibrary)));
+  $('#collection-cards').querySelectorAll('[data-undo-card]').forEach(button=>button.addEventListener('click',()=>{ const video=state.catalog.videos.find(item=>item.id===button.dataset.undoCard); const entry=removalFor(video); void changeSyncRemoval({action:'undo',key:video.fingerprint,revision:entry.revision},video.id); }));
+  $('#collection-cards').querySelectorAll('[data-mark-library]').forEach(button=>button.addEventListener('click',()=>markKeepOffUSB(button.dataset.markLibrary)));
+}
+function renderSyncRemovals() {
+  $('#sync-register-folder').textContent = syncRemovalData.folder ? `Removal history for video folder: ${syncRemovalData.folder}` : '';
+  const entries = Object.entries(syncRemovalData.videos).sort((a,b)=>Number(b[1].excluded)-Number(a[1].excluded) || a[1].file.localeCompare(b[1].file));
+  $('#sync-register-list').innerHTML = entries.length ? entries.map(([key,entry])=>`<div class="sync-register-row"><div><strong>${esc(entry.file)}</strong><small>${entry.excluded ? 'Keep off USB · next sync keeps your personal copy and moves the USB copy to recovery' : 'Undo saved · allowed back on the USB at the next sync'}</small></div>${entry.excluded ? `<button type="button" class="media-edit" data-undo-removal="${esc(key)}" ${syncRemovalBusy?'disabled':''}>UNDO REMOVAL</button>` : '<span class="settings-note">Allowed on USB</span>'}</div>`).join('') : '<p class="settings-note">No videos marked to keep off the USB.</p>';
+  $('#sync-register-list').querySelectorAll('[data-undo-removal]').forEach(button=>button.addEventListener('click',()=>changeSyncRemoval({action:'undo',key:button.dataset.undoRemoval,revision:syncRemovalData.videos[button.dataset.undoRemoval].revision})));
+  renderCollection();
+}
+async function loadSyncExclusions() {
+  const request = ++syncRemovalRequest;
+  try {
+    const response = await apiFetch('/api/sync-exclusions', {cache:'no-store'});
+    if (response.status === 404) throw new Error('Restart USB.tv using its launcher to enable removal and undo controls, then reload this page.');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Cannot read USB removal history');
+    if (request !== syncRemovalRequest) return;
+    syncRemovalData = data;
+    renderSyncRemovals();
+  } catch (error) { if (request === syncRemovalRequest) $('#sync-register-status').textContent = error.message; }
+}
+async function changeSyncRemoval(payload, id=null) {
+  if (syncRemovalBusy) return;
+  syncRemovalBusy = true;
+  ++syncRemovalRequest; // Ignore older reads that could restore stale button state.
+  $('#exclude-from-usb').disabled = true;
+  const message = payload.action === 'undo' ? 'Saving undo…' : 'Checking the video and saving its mark. Large videos may take a while…';
+  $('#sync-register-status').textContent = message;
+  $('#refresh-sync-register').disabled = true;
+  if (state.editing?.id === id) $('#sync-exclusion-status').textContent = message;
+  renderSyncRemovals();
+  try {
+    const response = await apiFetch('/api/sync-exclusions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if (response.status === 404) throw new Error('Restart USB.tv using its launcher to enable removal and undo controls.');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not save this USB removal change');
+    syncRemovalData = data;
+    const saved = payload.action === 'undo' ? 'Undo saved. Sync to allow this video back onto the USB; personal copies remain untouched.' : 'Saved immediately. The next sync keeps your personal copy and moves the USB copy to recovery. Undo is available below.';
+    $('#sync-register-status').textContent = saved;
+    if (state.editing?.id === id) $('#sync-exclusion-status').textContent = saved;
+    showToast(saved);
+  } catch (error) {
+    $('#sync-register-status').textContent = error.message;
+    if (state.editing?.id === id) $('#sync-exclusion-status').textContent = error.message;
+    showToast(error.message);
+  } finally {
+    syncRemovalBusy = false;
+    $('#exclude-from-usb').disabled = !state.editing || state.editing.missing || !state.editing.file?.startsWith('Videos/');
+    $('#refresh-sync-register').disabled = false;
+    renderSyncRemovals();
+    const next = id && $('#collection-cards').querySelector(`[data-undo-card="${CSS.escape(id)}"], [data-mark-library="${CSS.escape(id)}"]`);
+    if (!$('#editor-dialog').open) (next || $('#sync-register-status')).focus({preventScroll:true});
+  }
+}
+function markKeepOffUSB(id) { return changeSyncRemoval({action:'mark',id},id); }
+$('#exclude-from-usb').addEventListener('click',()=>markKeepOffUSB(state.editing?.id));
+$('#refresh-sync-register').addEventListener('click',()=>loadSyncExclusions());
+for (const selector of ['#collection-search','#collection-filter','#collection-genre','#collection-sort']) {
+  $(selector).addEventListener(selector === '#collection-search' ? 'input' : 'change',()=>{collectionPage=0;renderCollection();});
+}
+$('#collection-prev').addEventListener('click',()=>{collectionPage--;renderCollection();});
+$('#collection-next').addEventListener('click',()=>{collectionPage++;renderCollection();});

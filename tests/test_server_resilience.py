@@ -48,7 +48,7 @@ class ServerResilienceTests(unittest.TestCase):
             self.assertLess(text.index('HTTP_CLOSED'), text.index('USB.tv server stopped.'))
 
     def test_disconnects_are_recognised_without_hiding_storage_errors(self):
-        for error in (BrokenPipeError(), ConnectionResetError(), ConnectionAbortedError()):
+        for error in (BrokenPipeError(), ConnectionResetError(), ConnectionAbortedError(), TimeoutError()):
             self.assertTrue(server.client_disconnected(error))
         windows_error = OSError('An established connection was aborted')
         windows_error.winerror = 10053
@@ -67,6 +67,30 @@ class ServerResilienceTests(unittest.TestCase):
         with patch.object(server, 'LIBRARY', library):
             handler.do_GET()
         self.assertEqual(handler.send_json.call_count, 1)
+
+    def test_media_write_timeout_does_not_append_a_second_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / 'sample.mp4'
+            media.write_bytes(b'video bytes')
+            handler = server.Handler.__new__(server.Handler)
+            handler.path = '/Videos/sample.mp4'
+            handler.headers = {}
+            handler.server = Mock(stopping=threading.Event())
+            handler.trusted_request = Mock(return_value=True)
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.send_error = Mock()
+            handler.send_json = Mock()
+            handler.wfile = Mock()
+            handler.wfile.write.side_effect = TimeoutError('browser stopped reading')
+            library = Mock(root=Path(directory))
+            library.media_path.return_value = media
+            with patch.object(server, 'LIBRARY', library):
+                handler.do_GET()
+            handler.send_response.assert_called_once_with(200)
+            handler.send_json.assert_not_called()
+            handler.send_error.assert_not_called()
 
     def test_response_flush_disconnect_is_quiet_but_other_io_errors_propagate(self):
         handler = server.Handler.__new__(server.Handler)

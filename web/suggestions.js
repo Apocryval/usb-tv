@@ -202,6 +202,8 @@
       if (status==='no-title' && lower(video.title) || status==='no-description' && lower(video.description)
         || status==='no-tags' && video.tags?.length || status==='no-genres' && video.genres?.length
         || status==='no-channels' && (['advert','bumper'].includes(video.type)||video.channels?.length)
+        || status==='playback-errors' && video.playback_check?.status !== 'error'
+        || status==='playback-issues' && !video.playback_check?.issues?.length
         || status==='unknown-length' && measured
         || status==='episode-review' && (!(duration>3000)||['single','multiple'].includes(video.episode_review))
         || status==='multiple-episodes' && video.episode_review!=='multiple') return false;

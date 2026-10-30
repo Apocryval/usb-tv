@@ -63,3 +63,11 @@ test('converting an unrestricted advert to a programme requires reviewing its de
   f.choices[1].checked=true;await f.submit();
   assert.equal(f.ad.type,'programme');assert.deepEqual(Array.from(f.ad.channels),['B']);
 });
+test('renaming in labels saves the title on the selected file',async()=>{
+  const f=fixture();f.context.openQuickLabels();
+  f.get('#quick-label-title').value='  A better advert title  ';
+  await f.submit();
+  assert.equal(f.ad.title,'A better advert title');
+  assert.equal(f.programme.title,'Programme containing the break');
+  assert.equal(f.saves(),1);
+});

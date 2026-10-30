@@ -65,6 +65,16 @@ on its own OS. Build output goes into `Apps/`; intermediate files go into
 `.local/build/`. The all-platform ZIP is made with `scripts/package_update.py`
 only after all three builds are present and their source stamps match.
 
+## Share videos between two people
+
+Browse and watch in the **Library** tab; manage USB removals and undo there.
+Use **Sync Videos.bat**, **sync-videos.command**, or `sh ./sync-videos.sh`
+(Python 3.10+) to enter the USB and personal video folder
+paths and open the Tape Exchange menu, with previews and transfer progress.
+Choose **S** to sync both ways, or use `--preview` to only compare.
+See [the sync guide](docs/VIDEO-SYNC.md) for commands, conflict handling and the
+app’s persistent USB removal register.
+
 ## Further instructions
 
 - [Using the player](docs/USER-GUIDE.md)

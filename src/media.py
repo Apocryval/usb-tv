@@ -217,9 +217,23 @@ def inspect_media(path, root):
         try:
             completed = subprocess.run([probe, "-v", "error", "-show_format", "-show_streams", "-show_chapters", "-of", "json", str(path)], capture_output=True, timeout=30, check=True)
             data = json.loads(completed.stdout)
+            diagnostic = getattr(completed, "stderr", b"") or b""
+            diagnostic = diagnostic.decode("utf-8", "replace") if isinstance(diagnostic, bytes) else str(diagnostic)
+            if diagnostic.strip():
+                result["probe_error"] = diagnostic.strip()[:500]
             fmt = data.get("format", {})
             tags = {k.lower(): v for k, v in fmt.get("tags", {}).items()}
-            result.update(duration=number(fmt.get("duration")), title=str(tags.get("title", "")), genre=str(tags.get("genre", "")), description=str(tags.get("description", "")))
+            # Containers and video streams can both carry the programme title.
+            title = str(tags.get("title") or "").strip()
+            if not title:
+                for stream in data.get("streams", []):
+                    if stream.get("codec_type") != "video":
+                        continue
+                    stream_tags = {k.lower(): v for k, v in stream.get("tags", {}).items()}
+                    title = str(stream_tags.get("title") or "").strip()
+                    if title:
+                        break
+            result.update(duration=number(fmt.get("duration")), title=title, genre=str(tags.get("genre", "")), description=str(tags.get("description", "")))
             result["technical"]["container"] = fmt.get("format_name", result["technical"]["container"])
             inspected = set()
             for stream in data.get("streams", []):
@@ -232,12 +246,22 @@ def inspect_media(path, root):
                 if kind == "video":
                     result["technical"].update(width=stream.get("width", 0), height=stream.get("height", 0), pixel_format=stream.get("pix_fmt", ""))
             result["chapters"] = [number(chapter.get("start_time")) for chapter in data.get("chapters", [])]
-            return result
-        except (OSError, subprocess.SubprocessError, ValueError):
-            pass
+            if result["duration"] > 0:
+                return result
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            diagnostic = getattr(error, "stderr", b"") or b""
+            diagnostic = diagnostic.decode("utf-8", "replace") if isinstance(diagnostic, bytes) else str(diagnostic)
+            if diagnostic.strip():
+                result["probe_error"] = diagnostic.strip()[:500]
     if path.suffix.lower() in (".mp4", ".m4v", ".mov"):
         try:
-            result.update(inspect_mp4(path))
+            fallback = inspect_mp4(path)
+            for key, value in fallback.items():
+                if key == "technical":
+                    for field, detail in value.items():
+                        result["technical"].setdefault(field, detail)
+                elif not result.get(key):
+                    result[key] = value
         except (OSError, ValueError, struct.error):
             pass
     return result

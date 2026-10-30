@@ -24,3 +24,18 @@ class MediaStreamTests(unittest.TestCase):
         self.assertEqual(technical['pixel_format'], 'yuv420p10le')
         self.assertEqual(technical['audio_codec'], 'ac3')
         self.assertEqual(technical['width'], 1920)
+
+    def test_incomplete_probe_falls_back_to_mp4_duration_without_losing_stream_metadata(self):
+        from tempfile import TemporaryDirectory
+        from test_catalogue import mp4
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'sample.mp4'
+            path.write_bytes(mp4(120, 'Container title'))
+            probe = {'format':{},'streams':[{'codec_type':'video','codec_name':'h264', 'tags':{'title':'Stream title'}},
+                                          {'codec_type':'audio','codec_name':'aac'}]}
+            with patch('media.tool_path', return_value='ffprobe'), patch('media.subprocess.run', return_value=SimpleNamespace(stdout=json.dumps(probe))):
+                result = inspect_media(path, Path(directory))
+            self.assertEqual(result['duration'], 120)
+            self.assertEqual(result['title'], 'Stream title')
+            self.assertEqual(result['technical']['video_codec'], 'h264')
+            self.assertEqual(result['technical']['audio_codec'], 'aac')

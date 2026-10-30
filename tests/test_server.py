@@ -37,6 +37,31 @@ class ServerTests(unittest.TestCase):
         cls.http.server_close()
         cls.temp.cleanup()
 
+    def test_usb_exclusion_register_preserves_file(self):
+        with urlopen(self.base + '/api/catalog') as response:
+            catalog = json.load(response)
+        item = next(item for item in catalog['videos'] if item['file'].startswith('Videos/'))
+        request = Request(self.base + '/api/sync-exclusions',
+                          data=json.dumps({'id': item['id']}).encode(), headers=self.write_headers)
+        with urlopen(request) as response:
+            register = json.load(response)
+        self.assertEqual(len(register['videos']), 1)
+        self.assertTrue((server.LIBRARY.video_root / 'sample.mp4').exists())
+        with urlopen(self.base + '/api/sync-exclusions') as response:
+            self.assertEqual(json.load(response), register)
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(Request(self.base + '/api/sync-exclusions', data=b'{}',
+                            headers={'Content-Type': 'application/json'}))
+        self.assertEqual(caught.exception.code, 403)
+        caught.exception.close()
+        key, entry = next(iter(register['videos'].items()))
+        request = Request(self.base + '/api/sync-exclusions', data=json.dumps(
+            {'action':'undo', 'key':key, 'revision':entry['revision']}).encode(), headers=self.write_headers)
+        with urlopen(request) as response:
+            restored = json.load(response)
+        self.assertFalse(restored['videos'][key]['excluded'])
+        self.assertTrue((server.LIBRARY.video_root / 'sample.mp4').exists())
+
     def test_seek_ranges_both_folders(self):
         for path in ('Videos/sample.mp4', 'Adverts/ad.mp4'):
             for value, expected in [('bytes=100-199', self.media[100:200]), ('bytes=4000-', self.media[4000:]), ('bytes=-10', self.media[-10:])]:
@@ -47,6 +72,42 @@ class ServerTests(unittest.TestCase):
             with urlopen(Request(self.base + '/' + path, method='HEAD')) as response:
                 self.assertEqual(int(response.headers['Content-Length']), len(self.media))
                 self.assertEqual(response.read(), b'')
+
+    def test_compatible_playback_copy_supports_ranges_without_changing_original(self):
+        from playback_audio import cache_path
+        source = Path(self.temp.name) / 'Videos' / 'sample.mp4'
+        target = cache_path(self.temp.name, source)
+        target.parent.mkdir(exist_ok=True)
+        prepared = b'prepared-aac-copy' * 100
+        target.write_bytes(prepared)
+        try:
+            with urlopen(Request(self.base + '/Videos/sample.mp4?audio=compatible', headers={'Range':'bytes=10-29'})) as response:
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.read(), prepared[10:30])
+                self.assertEqual(response.headers['Content-Type'], 'video/mp4')
+            with urlopen(Request(self.base + '/Videos/sample.mp4?audio=compatible', method='HEAD')) as response:
+                self.assertEqual(int(response.headers['Content-Length']), len(prepared))
+            with urlopen(self.base + '/Videos/sample.mp4') as response:
+                self.assertEqual(response.read(), self.media)
+            self.assertEqual(source.read_bytes(), self.media)
+        finally:
+            target.unlink()
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(self.base + '/Videos/sample.mp4?audio=compatible')
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
+
+    def test_audio_preparation_requires_write_token_and_a_valid_media_id(self):
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(Request(self.base + '/api/playback-audio', data=b'{}', headers={'Content-Type':'application/json'}))
+        self.assertEqual(caught.exception.code, 403)
+        caught.exception.close()
+        for request in [Request(self.base + '/api/playback-audio?id=../../catalog.json'),
+                        Request(self.base + '/api/playback-audio', data=b'{"id":"not-real"}', headers=self.write_headers)]:
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(request)
+            self.assertEqual(caught.exception.code, 400)
+            caught.exception.close()
 
     def test_invalid_range_and_private_paths(self):
         for path, headers, status in [('/Videos/sample.mp4', {'Range':'bytes=9999-'}, 416), ('/Videos/%2e%2e/catalog.json', {}, 404), ('/catalog.json', {}, 404), ('/server.py', {}, 404)]:
