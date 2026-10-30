@@ -131,6 +131,31 @@ class ServerTests(unittest.TestCase):
         with urlopen(self.base + '/Videos/sample.mp4') as response:
             self.assertEqual(response.headers['Cache-Control'], 'no-store')
 
+    def test_browser_failure_is_saved_without_disabling_or_relabelling_and_stale_reports_are_rejected(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            library = Catalogue(directory, organise_new=False)
+            data = library.read()
+            data['videos'] = [{'id':'000001', 'file':'Videos/movie.mp4', 'fingerprint':'original',
+                'title':'My movie', 'duration':60, 'enabled':True, 'tags':['mine'], 'channels':['Cartoons']}]
+            library.write(data)
+            with patch.object(server, 'LIBRARY', library):
+                request = Request(self.base+'/api/playback-failure', data=json.dumps(
+                    {'id':'000001','fingerprint':'original','reason':'decode'}).encode(), headers=self.write_headers)
+                with urlopen(request) as response:
+                    result = json.load(response)
+                self.assertEqual(result['playback_check']['status'], 'error')
+                item = library.read()['videos'][0]
+                self.assertTrue(item['enabled']); self.assertEqual(item['tags'], ['mine'])
+                self.assertEqual(item['title'], 'My movie'); self.assertEqual(item['channels'], ['Cartoons'])
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(Request(self.base+'/api/playback-failure', data=json.dumps(
+                        {'id':'000001','fingerprint':'replacement','reason':'decode'}).encode(), headers=self.write_headers))
+                self.assertEqual(caught.exception.code, 409); caught.exception.close()
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(Request(self.base+'/api/playback-failure', data=b'{}', headers={'Content-Type':'application/json'}))
+                self.assertEqual(caught.exception.code, 403); caught.exception.close()
+
     def test_reorganised_web_assets_are_served_without_exposing_source_or_state(self):
         with urlopen(self.base + '/app.js') as response:
             self.assertIn(b'openQuickLabels', response.read())

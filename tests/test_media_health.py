@@ -28,6 +28,9 @@ class MediaHealthTests(unittest.TestCase):
         self.assertFalse(check_current(check,'abc',False))
         self.assertFalse(check_current(dict(check,version=0),'abc',True))
         self.assertFalse(check_current(dict(check,retryable=True,checked_at=0),'abc',True))
+        self.assertFalse(check_current(dict(check,runtime_failure=True),'abc',True))
+        self.assertFalse(check_current(dict(check,status='error'),'abc',True))
+        self.assertFalse(check_current(dict(check,status='warning',issues=[{'code':'zero_filled_regions'}]),'abc',True))
 
     def test_zero_filled_regions_are_flagged_even_without_decode_tools(self):
         with self.path.open('wb') as handle:
@@ -37,7 +40,7 @@ class MediaHealthTests(unittest.TestCase):
         codes = {i['code'] for i in result['issues']}
         self.assertIn('zero_filled_regions',codes)
         self.assertIn('decoder_unavailable',codes)
-        self.assertEqual(result['status'],'warning')
+        self.assertEqual(result['status'],'error')
 
     def test_sparse_allocation_alone_does_not_assert_damage(self):
         with patch('media_health.tool_path',return_value=None):
@@ -104,6 +107,44 @@ class MediaHealthTests(unittest.TestCase):
 
 
 class ScannerHealthTests(unittest.TestCase):
+    def test_runtime_exclusion_survives_unverified_scan_and_clears_only_after_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); library = Catalogue(root, organise_new=False)
+            (root/'Videos'/'clip.mp4').write_bytes(b'fixture content')
+            fingerprint = __import__('hashlib').sha256(b'fixture content').hexdigest()
+            good = {'version': CHECK_VERSION, 'fingerprint': fingerprint, 'decode_available': True,
+                    'checked_at': 1, 'status': 'checked', 'issues': [], 'samples': [{'decoded': True}]}
+            with patch('catalogue.inspect_media', return_value=META), patch('catalogue.check_playback', return_value=good):
+                library.scan()
+            item = library.read()['videos'][0]
+            library.report_playback_failure({'id': item['id'], 'fingerprint': fingerprint, 'reason': 'decode'})
+            with patch('catalogue.check_playback', return_value=dict(good, status='unchecked', checked_at=2, samples=[])) as checker:
+                result = library.scan()
+                checker.assert_called_once()
+            self.assertTrue(result['videos'][0]['playback_check']['runtime_failure'])
+            self.assertEqual(result['videos'][0]['playback_check']['status'], 'error')
+            with patch('catalogue.check_playback', return_value=dict(good, checked_at=__import__('time').time()+1)) as checker:
+                result = library.scan()
+                checker.assert_called_once()
+            self.assertEqual(result['videos'][0]['playback_check']['status'], 'checked')
+            self.assertFalse(result['videos'][0]['playback_check'].get('runtime_failure'))
+            self.assertEqual((root/'Videos'/'clip.mp4').read_bytes(), b'fixture content')
+
+    def test_concurrent_scan_checkpoint_does_not_erase_runtime_exclusion_or_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Catalogue(directory, organise_new=False)
+            baseline = library.read()
+            baseline.update(next_id=2, videos=[{'id': '000001', 'file': 'Videos/clip.mp4',
+                'fingerprint': 'content', 'duration': 10, 'title': 'My title', 'tags': ['mine'],
+                'channels': ['My channel'], 'genres': ['Comedy'], 'enabled': True}])
+            library.write(baseline)
+            candidate = json.loads(json.dumps(baseline))
+            library.report_playback_failure({'id': '000001', 'fingerprint': 'content', 'reason': 'stalled'})
+            result = library.commit_scan(candidate, baseline)['videos'][0]
+            self.assertEqual(result['playback_check']['status'], 'error')
+            self.assertEqual(result['title'], 'My title'); self.assertEqual(result['tags'], ['mine'])
+            self.assertTrue(result['enabled'])
+
     def test_backfill_and_cache_preserve_labels_without_rehashing_unchanged_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);catalogue=Catalogue(root,organise_new=False)

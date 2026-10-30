@@ -169,6 +169,28 @@ class Catalogue:
         temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temporary.replace(self.path)
 
+    def report_playback_failure(self, report):
+        reasons = {'network': 'The browser could not load this recording.',
+                   'decode': 'The browser could not decode this recording.',
+                   'unsupported': 'The browser could not play this recording format.',
+                   'stalled': 'Playback stopped advancing for 30 seconds.'}
+        reason = report.get('reason')
+        if reason not in reasons:
+            raise ValueError('Unknown playback failure')
+        with self.lock:
+            data = self.read()
+            item = next((v for v in data['videos'] if v['id'] == report.get('id') and not v.get('missing')), None)
+            if not item or not item.get('fingerprint') or item['fingerprint'] != report.get('fingerprint'):
+                raise CatalogueConflict('The recording changed; refresh before reporting its playback failure.')
+            check = dict(item.get('playback_check') or {})
+            check.update(status='error', fingerprint=item['fingerprint'], runtime_failure=True, checked_at=time.time(),
+                         issues=[i for i in check.get('issues', []) if not i.get('code', '').startswith('runtime_')]
+                                + [{'code': 'runtime_' + reason, 'severity': 'error',
+                                    'message': reasons[reason] + ' Excluded from playback until a successful rescan.'}])
+            item['playback_check'] = check
+            self.write(data)
+            return {'id': item['id'], 'playback_check': check, 'revision': data['revision']}
+
     def discover(self):
         paths = []
         if not self.video_root.is_dir():
@@ -201,6 +223,12 @@ class Catalogue:
                 latest = actual.get(item["id"]) or by_file.get(item.get("file"))
                 before = original.get(item["id"]) or original_files.get(item.get("file"))
                 if latest and before:
+                    # A cached scan draft must not erase a browser failure
+                    # reported while the scanner was working on another file.
+                    health = latest.get('playback_check') or {}
+                    if (health.get('runtime_failure') and latest.get('fingerprint') == item.get('fingerprint')
+                            and health.get('checked_at', 0) > (item.get('playback_check') or {}).get('checked_at', 0)):
+                        item['playback_check'] = health
                     for key in editable:
                         if (key in ("duration", "episodes", "episode_review", "break_points", "breaks_approved")
                                 and latest.get("fingerprint") != item.get("fingerprint")):
@@ -403,6 +431,13 @@ class Catalogue:
                             progress(stage="playback", completed=index, total=len(files), current=rel)
                             check_metadata = metadata or {"duration":item.get("duration",0), "technical":item.get("technical",{})}
                             item["playback_check"] = check_playback(path, self.root, check_metadata, fingerprint, cancelled)
+                            if (saved_check and saved_check.get('runtime_failure') and saved_check.get('fingerprint') == fingerprint
+                                    and item['playback_check']['status'] != 'checked'):
+                                check = item['playback_check']
+                                check['runtime_failure'] = True
+                                check['status'] = 'error'
+                                check['issues'] += [issue for issue in saved_check.get('issues', [])
+                                                    if issue.get('code', '').startswith('runtime_')]
                         else:
                             item["playback_check"] = saved_check
                         after = path.stat()

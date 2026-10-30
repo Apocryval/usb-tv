@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('web/app.js','utf8');
 function fixture() {
-  const context={syncRemovalData:{videos:{old:{excluded:true}}},displayTitle:v=>v.title};
+  const context={Schedule:require('../web/schedule.js'),syncRemovalData:{videos:{old:{excluded:true}}},displayTitle:v=>v.title};
   vm.runInNewContext(source.slice(source.indexOf('function removalFor('),source.indexOf('function renderCollection(')),context);
   return context;
 }
@@ -42,4 +42,6 @@ test('playback issue filter includes scan warnings and decode failures, excludin
     {id:'missing',title:'Missing',missing:true,playback_check:{status:'error',issues:[{message:'Decode failed'}]}}];
   assert.deepEqual(Array.from(c.collectionMatches(items,{filter:'playback'}),v=>v.id),['codec','bad']);
   assert.deepEqual(Array.from(c.collectionMatches(items,{filter:'failed-playback'}),v=>v.id),['bad']);
+  assert.equal(c.collectionMatches(items).some(v=>v.id==='bad'),false);
+  assert.equal(c.collectionMatches(items,{filter:'all'}).some(v=>v.id==='bad'),true);
 });

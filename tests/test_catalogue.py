@@ -9,7 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from catalogue import Catalogue, CatalogueConflict
-from media import inspect_mp4, suggest_breaks
+from media import inspect_mp4, suggest_breaks, tool_path
+from media_health import CHECK_VERSION
 
 
 def box(kind, payload):
@@ -33,7 +34,13 @@ class CatalogueTests(unittest.TestCase):
     def test_unchanged_scan_does_not_read_media_or_checkpoint_every_batch(self):
         for index in range(55):
             (self.root / 'Videos' / f'{index}.mp4').write_bytes(mp4())
-        first = self.catalog.scan()
+        # These header-only fixtures are not decodable videos. This regression
+        # concerns cached healthy files; failed checks intentionally rerun now.
+        def passed(path, root, metadata, fingerprint, cancelled):
+            return {'version': CHECK_VERSION, 'fingerprint': fingerprint,
+                    'decode_available': bool(tool_path('ffmpeg', root)), 'status': 'checked', 'issues': []}
+        with patch('catalogue.check_playback', side_effect=passed):
+            first = self.catalog.scan()
         with patch('catalogue.hashlib.sha256', side_effect=AssertionError('Rehashed unchanged media')), \
                 patch('catalogue.inspect_media', side_effect=AssertionError('Reprobed unchanged media')), \
                 patch.object(self.catalog, 'commit_scan', wraps=self.catalog.commit_scan) as commit, \

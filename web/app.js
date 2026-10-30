@@ -803,7 +803,7 @@ function resetMediaFilters(prefix, render=true) {
 function filteredLibrary() {
   const filter = $("#library-filter").value;
   const scope=state.catalog.videos.filter(video => filter === "missing" ? video.missing : !video.missing &&
-    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "playback" && playbackIssues(video).length || filter === "failed-playback" && video.playback_check?.status === "error" || filter === "unassigned" && unassigned(video) || video.type === filter));
+    (filter === "all" || filter === "review" && reviewReasons(video).length || filter === "playback" && playbackIssues(video).length || filter === "failed-playback" && Schedule.playbackBlocked(video) || filter === "unassigned" && unassigned(video) || video.type === filter));
   return USBTvSuggestions.filterMedia(scope,mediaFilters('library'));
 }
 function pageItems(items, prefix, view) {
@@ -906,7 +906,7 @@ function renderChannels() {
     button.addEventListener('click',()=>deleteChannel(button.dataset.deleteChannel));
   });
 }
-function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); renderCollection(); }
+function renderAll() { reconcileBroadcasts(); invalidateSchedule(); renderGuide(); renderLibrary(); renderChannels(); renderCollection(); enforcePlaybackExclusions(); }
 let bulkRows = [];
 function bulkRowsForScope() {
   const scope = $("#bulk-scope").value;
@@ -1484,6 +1484,8 @@ function tuneChannel(channel, withStatic = true) {
   showChannelOsd(String(playableChannels().indexOf(channel)+1).padStart(3,"0"),channel);
 }
 function previewVideo(id, position = 0) {
+  const record = state.catalog.videos.find(video => video.id === id);
+  if (Schedule.playbackBlocked(record)) { showToast('Excluded from playback. Repair the file and rescan to check it again.'); return; }
   if ($("#quick-label-panel").dataset.saving === "true") return;
   closeQuickLabels();
   stopChaosTransition();
@@ -1503,7 +1505,7 @@ function previewVideo(id, position = 0) {
   window.USBTvAudio?.setTrack(video);
   player.src = videoUrl(video.file);
   showPlayer();
-  player.play().catch(() => {revealPlayerControls();showToast("Press Play to start playback.");});
+  player.play().catch(error => {if(error.name === "NotAllowedError" && state.playback === playback) {revealPlayerControls();showToast("Press Play to start playback.");}});
 }
 // Independent from the live schedule: whole files, one showing per shuffled cycle.
 function chaosRandomInt(limit) {
@@ -1513,7 +1515,7 @@ function chaosRandomInt(limit) {
   return sample[0] % limit;
 }
 function shuffleChaos(videos, previousId = null, randomInt = chaosRandomInt) {
-  const queue = videos.filter(video=>!video.missing && video.file).slice();
+  const queue = videos.filter(video=>!video.missing && video.file && !Schedule.playbackBlocked(video)).slice();
   for (let i=queue.length-1;i>0;i--) {
     const j=randomInt(i+1); [queue[i],queue[j]]=[queue[j],queue[i]];
   }
@@ -1565,7 +1567,7 @@ function chaosTransition() {
 function startChaos() {
   if (!state.catalog.settings?.advanced_mode || $('#quick-label-panel').dataset.saving==='true') return;
   const queue=shuffleChaos(state.catalog.videos);
-  if (!queue.length) {showToast('Add some videos before starting Wow:Classique.');return;}
+  if (!queue.length) {showToast('No playable videos. Check Failed playback checks, or rescan repaired files.');return;}
   closeQuickLabels();clearChannelEntry();
   state.playback={mode:'chaos',queue,index:-1,id:null,failures:0,trail:[],trailIndex:-1};
   $('#channel-down').hidden=true;$('#channel-up').hidden=true;$('#return-live').hidden=true;
@@ -1584,8 +1586,24 @@ function startChaos() {
   chaosTransition();advanceChaos();
 }
 // The visible playlist is played history followed by the untouched queue.
+function pruneChaos(playback) {
+  const current = new Map(state.catalog.videos.map(video => [video.id, video]));
+  const eligible = video => current.get(video.id) && !current.get(video.id).missing && !Schedule.playbackBlocked(current.get(video.id));
+  const queue = playback.queue.filter(eligible).map(video => current.get(video.id));
+  const trail = (playback.trail || []).filter(eligible).map(video => current.get(video.id));
+  if (queue.length !== playback.queue.length || trail.length !== (playback.trail || []).length) {
+    playback.index = playback.queue.slice(0,playback.index+1).filter(eligible).length-1;
+    playback.trailIndex = (playback.trail || []).slice(0,(playback.trailIndex ?? -1)+1).filter(eligible).length-1;
+    playback.queue = queue; playback.trail = trail;
+  } else {
+    // Keep array identity stable for the drawer while refreshing health fields.
+    playback.queue.splice(0,playback.queue.length,...queue);
+    playback.trail?.splice(0,playback.trail.length,...trail);
+  }
+}
 function chaosPlaylist(playback) {
   if (playback?.mode !== 'chaos') return [];
+  pruneChaos(playback);
   return [...(playback.trail || []), ...playback.queue.slice(playback.index + 1)];
 }
 function jumpChaos(position) {
@@ -1604,6 +1622,14 @@ function jumpChaos(position) {
 function advanceChaos(failed = false) {
   const playback=state.playback;
   if (playback?.mode!=='chaos' || $('#quick-label-panel').dataset.saving==='true') return;
+  pruneChaos(playback);
+  if (!playback.queue.length) {
+    const player = $('#player'); player.onloadedmetadata = null; player.pause(); player.removeAttribute('src'); player.load();
+    playback.id = null; playback.loaded = false;
+    $('#player-title').textContent = 'No playable files remain';
+    $('#player-meta').textContent = 'Repair excluded files, then rescan to check them again.';
+    revealPlayerControls(); updatePlaybackControls(); return;
+  }
   if (failed && ++playback.failures>=playback.queue.length) {
     $('#player-meta').textContent='None of these files could be played. Close Wow:Classique and check the files.';
     showToast('Wow:Classique stopped: no playable files.');return;
@@ -1625,6 +1651,8 @@ function advanceChaos(failed = false) {
 function previousChaos() {
   const playback=state.playback;
   if (playback?.mode!=='chaos' || !(playback.trailIndex>0) || $('#quick-label-panel').dataset.saving==='true') return;
+  pruneChaos(playback);
+  if (!(playback.trailIndex>0)) return;
   closeQuickLabels();playback.failures=0;
   showChaosVideo(playback,playback.trail[--playback.trailIndex]);
 }
@@ -1637,7 +1665,7 @@ function showChaosVideo(playback,video) {
   player.onloadedmetadata=()=>{
     if(state.playback!==playback || playback.id!==video.id)return;
     player.currentTime=0;playback.loaded=true;
-    player.play().catch(()=>{revealPlayerControls();showToast('Press Play to start Wow:Classique.');});
+    player.play().catch(error=>{if(error.name==='NotAllowedError' && state.playback===playback && playback.id===video.id){revealPlayerControls();showToast('Press Play to start Wow:Classique.');}});
   };
   window.USBTvAudio?.setTrack(video);
   player.src=videoUrl(video.file);player.load();updatePlaybackControls();
@@ -1651,12 +1679,52 @@ function retryStalledPlayback() {
   player.addEventListener('loadedmetadata', () => {
     if (state.playback !== playback || player.src !== source) return;
     if (playback.mode !== 'channel') seekToLive(position, player);
-    player.play().catch(() => { revealPlayerControls(); showToast('Press Play to retry this video.'); });
+    player.play().catch(error => { if(error.name==='NotAllowedError' && state.playback===playback) {revealPlayerControls();showToast('Press Play to retry this video.');} });
   }, {once:true});
   player.load(); revealPlayerControls();
 }
+function currentPlaybackVideo() {
+  const playback = state.playback;
+  const id = ['preview','chaos'].includes(playback?.mode) ? playback.id : playback?.mediaId;
+  return state.catalog.videos.find(video => video.id === id);
+}
+function enforcePlaybackExclusions() {
+  const playback = state.playback, video = currentPlaybackVideo();
+  if (playback?.mode === 'chaos') pruneChaos(playback);
+  if (!video || !Schedule.playbackBlocked(video)) return;
+  if (playback.mode === 'chaos') advanceChaos();
+  else if (playback.mode === 'channel') { playback.paused = false; syncChannel(true); }
+  else if (playback.mode === 'replay') returnToLive(false);
+  else {
+    const player = $('#player'); player.onloadedmetadata = null; player.pause(); player.removeAttribute('src'); player.load();
+    playback.loaded = false;
+    $('#player-meta').textContent = 'Excluded from playback. Repair this recording, then rescan to check it again.';
+    revealPlayerControls();
+  }
+}
+function excludePlaybackFile(video, reason) {
+  if (!video || Schedule.playbackBlocked(video)) return;
+  const id = video.id, fingerprint = video.fingerprint;
+  video.playback_check = {...video.playback_check, status:'error', runtime_failure:true,
+    issues:[...(video.playback_check?.issues || []), {code:'runtime_'+reason, severity:'error',
+      message:'Playback failed; excluded until a successful rescan.'}]};
+  renderAll();
+  showToast('Skipped an unavailable recording. It is excluded until a successful rescan.');
+  const task = saveQueue.catch(() => {}).then(async () => {
+    const response = await apiFetch('/api/playback-failure', {method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id,fingerprint,reason})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not save the playback exclusion.');
+    const actual = state.catalog.videos.find(item => item.id === id && item.fingerprint === fingerprint);
+    if (actual) actual.playback_check = result.playback_check;
+    state.catalog.revision = saveRevision = result.revision;
+  });
+  saveQueue = task;
+  task.catch(error => showToast(`Excluded in this tab, but could not save it: ${error.message}`));
+}
 globalThis.USBTvPlaybackHealth?.configure({
-  getPlayback: () => state.playback, retry: retryStalledPlayback, reveal: revealPlayerControls
+  getPlayback: () => state.playback, retry: retryStalledPlayback, reveal: revealPlayerControls,
+  skip: () => excludePlaybackFile(currentPlaybackVideo(), 'stalled')
 });
 globalThis.USBTvCompatibleAudio?.configure({
   api: apiFetch, url: videoUrl,
@@ -1697,6 +1765,8 @@ function loadChannelReplay(autoplay = true) {
   if (playback.cursor>=Date.now()) {returnToLive();return;}
   const current=Schedule.locate(playback.line,playback.cursor);
   if (!current) {returnToLive();return;}
+  const actual = state.catalog.videos.find(video => video.id === current.segment.video.id);
+  if (!actual || Schedule.playbackBlocked(actual) || actual.missing) { returnToLive(false); return; }
   playback.current=current;playback.mediaId=current.segment.video.id;playback.loaded=false;playback.autoplay=autoplay;
   const player=$('#player'), behind=Math.max(1,Math.round((Date.now()-playback.cursor)/60000));
   player.autoplay=autoplay;
@@ -1708,7 +1778,7 @@ function loadChannelReplay(autoplay = true) {
   player.onloadedmetadata=()=>{
     if (state.playback!==playback || playback.current!==current) return;
     seekToLive(current.position,player);playback.loaded=true;
-    if(autoplay)player.play().catch(()=>{revealPlayerControls();showToast('Press Play to watch the replay.');});
+    if(autoplay)player.play().catch(error=>{if(error.name==='NotAllowedError' && state.playback===playback){revealPlayerControls();showToast('Press Play to watch the replay.');}});
     else {player.pause();revealPlayerControls();}
   };
   player.src=videoUrl(current.segment.video.file);player.load();updatePlaybackControls();
@@ -1776,7 +1846,7 @@ function syncChannel(force = false) {
       if (latest?.key !== key) { syncChannel(); return; }
       playback.current = latest; playback.loaded = true;
       seekToLive(latest.position);
-      player.play().catch(() => { playback.paused = true; revealPlayerControls();showToast("Press Play to join the channel."); });
+      player.play().catch(error => { if(error.name === "NotAllowedError" && state.playback === playback && playback.key === key) {playback.paused = true; revealPlayerControls();showToast("Press Play to join the channel.");} });
     };
     player.src = videoUrl(current.segment.video.file);
     player.load();
@@ -2017,6 +2087,13 @@ $("#preview-play").addEventListener("click", () => {
 });
 $("#guide-preview-video").addEventListener("error", () => {
   if (!$("#guide-preview-video").hasAttribute("src")) return;
+  const code = $('#guide-preview-video').error?.code;
+  if (code > 1) {
+    const current = guidePreview.channel && Schedule.locate(timeline(guidePreview.channel));
+    excludePlaybackFile(state.catalog.videos.find(video => video.id === current?.segment.video.id),
+      code === 3 ? 'decode' : code === 4 ? 'unsupported' : 'network');
+    return;
+  }
   guidePreview.failed = true; $("#preview-play").hidden = true;
   $("#preview-message").textContent = "Preview unavailable. This browser may not support this video's codec.";
   $("#preview-message").hidden = false;
@@ -2064,24 +2141,10 @@ $("#player").addEventListener("play", () => {
 $("#player").addEventListener("ended", () => { if (state.playback?.mode === "channel") syncChannel(true); else if(state.playback?.mode==='chaos') advanceChaos(); else if(state.playback?.mode==='replay') advanceChannelReplay(); });
 $("#player").addEventListener("error", () => {
   if (!state.playback) return;
-  if (state.playback.mode === 'replay') {
-    state.playback.loaded=false;
-    $('#player-meta').textContent='This replay file cannot be played. Choose Next programme or Return to live.';
-    showToast('Unable to play this replay.');return;
-  }
-  if (state.playback.mode === 'chaos') {
-    const playback=state.playback, id=playback.id;
-    showToast('Wow:Classique skipped a file this browser cannot play.');
-    setTimeout(()=>{if(state.playback===playback && playback.id===id)advanceChaos(true);},300);
-    return;
-  }
-  if (state.playback.mode === "channel") {
-    state.playback.failed = true;
-    $('#retry-media').hidden = false;
-    revealPlayerControls();
-  }
-  $("#player-meta").textContent = "This browser cannot play this file. Check its codec or choose another channel.";
-  showToast("The browser could not play this media file.");
+  const code = $('#player').error?.code;
+  if (!code || code === 1) return; // Source changes/user cancellation are not bad files.
+  excludePlaybackFile(currentPlaybackVideo(), code === 3 ? 'decode' : code === 4 ? 'unsupported' : 'network');
+
 });
 updateFullscreenButtons(); applyThemeSetting(); updateClock();
 setInterval(updateClock,1000);
@@ -2195,9 +2258,9 @@ function collectionMatches(videos, {query='', filter='available', genre='', sort
   const search = query.trim().toLocaleLowerCase();
   return videos.filter(video => {
     const marked = removalFor(video)?.excluded === true;
-    if (filter === 'available' && video.missing || filter === 'marked' && !marked || filter === 'missing' && !video.missing) return false;
+    if (filter === 'available' && (video.missing || Schedule.playbackBlocked(video)) || filter === 'marked' && !marked || filter === 'missing' && !video.missing) return false;
     if (filter === 'playback' && (video.missing || !playbackIssues(video).length)) return false;
-    if (filter === 'failed-playback' && (video.missing || video.playback_check?.status !== 'error')) return false;
+    if (filter === 'failed-playback' && (video.missing || !Schedule.playbackBlocked(video))) return false;
     if (genre && !(video.genres || []).includes(genre)) return false;
     return !search || [displayTitle(video),video.file,video.description,...video.tags||[]].join(' ').toLocaleLowerCase().includes(search);
   }).sort((a,b) => sort === 'duration' ? (b.duration||0)-(a.duration||0) || displayTitle(a).localeCompare(displayTitle(b))
@@ -2221,7 +2284,7 @@ function renderCollection() {
   $('#collection-cards').innerHTML = matches.slice(collectionPage*24,(collectionPage+1)*24).map(video => {
     const marked = removalFor(video)?.excluded === true;
     const issues = playbackIssues(video);
-    return `<article class="collection-card"><span class="collection-status">${video.missing ? 'File missing' : issues.length ? 'Needs playback review' : 'Available'}${marked ? ' · Keep off USB' : ''}</span><h2>${esc(displayTitle(video))}</h2><p>${esc(video.type || 'programme')} · ${formatDuration(video.duration)}${video.enabled===false ? ' · Broadcast disabled' : ''}</p>${video.genres?.length ? `<p>${esc(video.genres.join(' · '))}</p>` : ''}${video.description ? `<p>${esc(video.description.slice(0,200))}</p>` : ''}${issues.length ? `<p class="collection-playback-check"><strong>Playback check:</strong> ${esc(issues.join(' · '))}</p>` : video.playback_check?.status === 'checked' ? '<p class="settings-note">Playback spot checks passed</p>' : ''}<details class="collection-file"><summary>File details</summary><p>${esc(video.file)}</p></details><div class="collection-actions"><button type="button" class="primary-button" data-watch-library="${esc(video.id)}" ${video.missing?'disabled':''}>WATCH</button><button type="button" class="media-edit" data-edit-library="${esc(video.id)}">EDIT LABELS</button>${marked ? `<button type="button" class="media-edit" data-undo-card="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>UNDO USB REMOVAL</button>` : ''}${video.file?.startsWith('Videos/') && !video.missing && !marked ? `<button type="button" class="media-edit" data-mark-library="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>KEEP OFF USB</button>`:''}</div></article>`;
+    return `<article class="collection-card"><span class="collection-status">${video.missing ? 'File missing' : Schedule.playbackBlocked(video) ? 'Excluded from playback' : issues.length ? 'Needs playback review' : 'Available'}${marked ? ' · Keep off USB' : ''}</span><h2>${esc(displayTitle(video))}</h2><p>${esc(video.type || 'programme')} · ${formatDuration(video.duration)}${video.enabled===false ? ' · Broadcast disabled' : ''}</p>${video.genres?.length ? `<p>${esc(video.genres.join(' · '))}</p>` : ''}${video.description ? `<p>${esc(video.description.slice(0,200))}</p>` : ''}${issues.length ? `<p class="collection-playback-check"><strong>Playback check:</strong> ${esc(issues.join(' · '))}</p>` : video.playback_check?.status === 'checked' ? '<p class="settings-note">Playback spot checks passed</p>' : ''}<details class="collection-file"><summary>File details</summary><p>${esc(video.file)}</p></details><div class="collection-actions"><button type="button" class="primary-button" data-watch-library="${esc(video.id)}" ${video.missing || Schedule.playbackBlocked(video)?'disabled':''}>WATCH</button><button type="button" class="media-edit" data-edit-library="${esc(video.id)}">EDIT LABELS</button>${marked ? `<button type="button" class="media-edit" data-undo-card="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>UNDO USB REMOVAL</button>` : ''}${video.file?.startsWith('Videos/') && !video.missing && !marked ? `<button type="button" class="media-edit" data-mark-library="${esc(video.id)}" ${syncRemovalBusy?'disabled':''}>KEEP OFF USB</button>`:''}</div></article>`;
   }).join('');
   $('#collection-cards').querySelectorAll('[data-watch-library]').forEach(button=>button.addEventListener('click',()=>previewVideo(button.dataset.watchLibrary)));
   $('#collection-cards').querySelectorAll('[data-edit-library]').forEach(button=>button.addEventListener('click',()=>openEditor(button.dataset.editLibrary)));

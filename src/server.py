@@ -379,7 +379,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if getattr(self.server, 'stopping', None) and self.server.stopping.is_set():
             return self.send_error(503, "USB.tv is restarting")
-        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan", "/api/video-folder", "/api/sync-exclusions", "/api/playback-audio"):
+        if route not in ("/api/catalog", "/api/analyse", "/api/broadcasts", "/api/scan", "/api/video-folder", "/api/sync-exclusions", "/api/playback-audio", "/api/playback-failure"):
             return self.send_error(404)
         if (self.headers.get_content_type() != "application/json"
                 or not hmac.compare_digest(self.headers.get("X-USBtv-Write", "").encode(), WRITE_TOKEN.encode())):
@@ -393,6 +393,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("Expected an object")
             if route == "/api/playback-audio":
                 return self.send_json(self.audio_jobs().prepare(data.get("id")))
+            if route == "/api/playback-failure":
+                return self.send_json(LIBRARY.report_playback_failure(data))
             if route == "/api/sync-exclusions":
                 with LIBRARY.lock:
                     if SCANS and SCANS.thread and SCANS.thread.is_alive():

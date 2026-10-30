@@ -3,6 +3,7 @@
   class PlaybackWatch {
     constructor(delay = 12000) { this.delay = delay; this.reset(); }
     reset() { this.key = null; this.position = 0; this.progressAt = null; }
+    shouldSkip(now) { return this.progressAt !== null && now - this.progressAt >= 30000; }
     sample({key, position, active}, now) {
       if (!active || !key || !Number.isFinite(position)) { this.reset(); return false; }
       if (key !== this.key || this.progressAt === null || Math.abs(position - this.position) >= .1) {
@@ -20,15 +21,22 @@
   let config;
   function tick() {
     const playback = config?.getPlayback();
+    const now = Date.now();
     const stalled = watch.sample({key:playback,
       position:player.currentTime,
-      active:dialog.open && !document.hidden && Boolean(player.currentSrc) && !player.paused && !player.ended && !player.error}, Date.now());
+      active:dialog.open && !document.hidden && Boolean(player.currentSrc) && !player.paused && !player.ended && !player.error}, now);
+    if (stalled && watch.shouldSkip(now) && config?.skip) {
+      watch.reset(); notice.hidden = true; config.skip(); return;
+    }
     notice.hidden = !stalled;
     if (stalled) config?.reveal();
   }
   player.addEventListener('loadstart', () => { watch.reset(); notice.hidden = true; });
   document.querySelector('#retry-stalled-playback').addEventListener('click', () => {
     watch.reset(); notice.hidden = true; config?.retry();
+  });
+  document.querySelector('#skip-stalled-playback').addEventListener('click', () => {
+    watch.reset(); notice.hidden = true; config?.skip();
   });
   document.addEventListener('visibilitychange', () => { watch.reset(); notice.hidden = true; });
   setInterval(tick, 1000);

@@ -103,3 +103,33 @@ test('advert breaks never end a repeating lineup midway through its programme ro
     assert.notEqual(S.locate(line,line.duration*1000-1).block.video.id,S.locate(line,line.duration*1000).block.video.id);
   }
 });
+
+test('failed recordings, adverts and bumpers are absent from fresh and frozen schedules', () => {
+  const bad = {status:'error',issues:[{code:'decode_failed'}]};
+  const good = media('good',120,{fingerprint:'good'});
+  const broken = media('broken',120,{fingerprint:'bad',playback_check:bad});
+  const ad = media('ad',15,{type:'advert',playback_check:bad});
+  const bumper = media('bumper',4,{type:'bumper',playback_check:bad});
+  const c = catalog([good,broken,ad,bumper]);
+  let line = S.buildCycle(c,'Bin TV','seed',0);
+  assert.deepEqual([...new Set(line.blocks.flatMap(b=>b.segments.map(s=>s.video.id)))],['good']);
+  c.broadcasts={'Bin TV':{active:{anchor:0,seed:'seed',schedule_version:4,snapshot:{channel:{name:'Bin TV'},
+    videos:[good,broken,ad,bumper].map(v=>({...v,playback_check:undefined}))}},pending:null}};
+  line = S.build(c,'Bin TV');
+  assert.deepEqual([...new Set(line.blocks.flatMap(b=>b.segments.map(s=>s.video.id)))],['good']);
+  good.playback_check=bad;
+  assert.equal(S.build(c,'Bin TV').duration,0,'an entirely excluded lineup is empty, not an infinite skip loop');
+});
+
+test('legacy incomplete-file warnings block playback, codec warnings alone do not', () => {
+  assert.equal(S.playbackBlocked(media('old',60,{playback_check:{status:'warning',issues:[{code:'zero_filled_regions'}]}})),true);
+  assert.equal(S.validMedia(media('codec',60,{playback_check:{status:'warning',issues:[{code:'browser_audio'}]}})),true);
+});
+
+test('frozen plans cannot resurrect missing, disabled, removed or replaced recordings', () => {
+  for (const change of [v=>v.missing=true,v=>v.enabled=false,v=>v.fingerprint='replacement',v=>v.playback_check={status:'error'}]) {
+    const video=media('one',60,{fingerprint:'original'}), c=catalog([video]);
+    c.broadcasts={'Bin TV':{active:{anchor:0,seed:'seed',snapshot:{channel:{name:'Bin TV'},videos:[{...video}]}},pending:null}};
+    change(video);assert.equal(S.build(c,'Bin TV').duration,0);
+  }
+});

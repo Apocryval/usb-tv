@@ -36,3 +36,27 @@ test('retrying a replay reloads the same file and restores its position without 
   assert.equal(playback.mode,'replay');
   context.state.playback={mode:'preview'};listener();assert.equal(plays,1,'a late retry callback cannot resume a different recording');
 });
+
+test('automatic exclusion waits for 30s and is cancelled by progress or deliberate pause',()=>{
+  const watch=new PlaybackWatch(), key={};
+  watch.sample({key,position:1,active:true},0);
+  assert.equal(watch.shouldSkip(29999),false);assert.equal(watch.shouldSkip(30000),true);
+  watch.sample({key,position:2,active:true},30000);
+  assert.equal(watch.shouldSkip(30001),false);
+  watch.sample({key,position:2,active:false},60000);
+  assert.equal(watch.shouldSkip(90000),false);
+});
+
+test('player source cancellations are ignored but actual decoder failures are excluded',()=>{
+  const source=fs.readFileSync('web/app.js','utf8');
+  const start=source.indexOf('$("#player").addEventListener("error"');
+  const end=source.indexOf('\nupdateFullscreenButtons();',start);
+  let handler,reason,excluded;
+  const video={id:'one'}, player={error:{code:1},addEventListener(name,fn){handler=fn;}};
+  const context={$:()=>player,state:{playback:{mode:'channel'}},currentPlaybackVideo:()=>video,
+    excludePlaybackFile(v,r){excluded=v;reason=r;}};
+  vm.runInNewContext(source.slice(start,end),context);
+  handler();assert.equal(excluded,undefined);
+  player.error={code:3};handler();assert.equal(excluded,video);assert.equal(reason,'decode');
+  player.error={code:4};handler();assert.equal(reason,'unsupported');
+});

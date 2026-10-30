@@ -13,6 +13,10 @@ def check_current(check, fingerprint, decode_available):
     return (isinstance(check, dict) and check.get('version') == CHECK_VERSION
             and check.get('fingerprint') == fingerprint
             and check.get('decode_available') == decode_available
+            and not check.get('runtime_failure')
+            and check.get('status') != 'error'
+            and not any(issue.get('code') in {'empty_file', 'zero_filled_regions', 'container_errors', 'decode_failed', 'decode_errors'}
+                        for issue in check.get('issues', []))
             and not (check.get('retryable') and time.time() - check.get('checked_at', 0) >= 3600))
 
 
@@ -49,9 +53,9 @@ def check_playback(path, root, metadata, fingerprint, cancelled=lambda: False, b
                 if len(block) == length and block.count(0) == length:
                     zero_samples += 1
         if zero_samples >= 2:
-            issue('zero_filled_regions', 'Possible incomplete download: multiple sampled regions contain only zero bytes.')
+            issue('zero_filled_regions', 'Possible incomplete download: multiple sampled regions contain only zero bytes.', 'error')
     if metadata.get('probe_error'):
-        issue('container_errors', 'The container reader reported errors; the file may be damaged or incomplete.')
+        issue('container_errors', 'The container reader reported errors; the file may be damaged or incomplete.', 'error')
     technical = metadata.get('technical', {})
     video, audio = str(technical.get('video_codec','')).lower(), str(technical.get('audio_codec','')).lower()
     if video in {'hevc','h265','hev1','hvc1'}:
@@ -103,7 +107,7 @@ def check_playback(path, root, metadata, fingerprint, cancelled=lambda: False, b
                 if not passed:
                     issue('decode_failed', 'A playback sample could not be decoded; the file may be incomplete or damaged.', 'error')
                 elif errors.strip():
-                    issue('decode_errors', 'The decoder reported errors while reading a playback sample.')
+                    issue('decode_errors', 'The decoder reported errors while reading a playback sample.', 'error')
             except TimeoutError:
                 retryable = True
                 issue('check_timeout', 'Playback checks reached their time limit; this file needs review.', 'info')

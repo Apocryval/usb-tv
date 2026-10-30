@@ -2,7 +2,9 @@
 (function (root) {
   "use strict";
   const ANCHOR = Date.UTC(2026, 0, 1);
-  const validMedia = (item) => item.enabled !== false && !item.missing && Number.isFinite(Number(item.duration)) && Number(item.duration) > 0;
+  const playbackBlocked = (item) => item?.playback_check?.status === 'error' ||
+    (item?.playback_check?.issues || []).some(issue => ['empty_file','zero_filled_regions','container_errors','decode_failed','decode_errors'].includes(issue.code));
+  const validMedia = (item) => item.enabled !== false && !item.missing && !playbackBlocked(item) && Number.isFinite(Number(item.duration)) && Number(item.duration) > 0;
   function shuffled(items, text) {
     let seed = 2166136261;
     for (const char of text) seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
@@ -100,7 +102,10 @@
     }
     function cycle(version) {
       const actual = new Map(catalog.videos.map(video => [video.id,video]));
-      const videos = version.snapshot.videos.map(frozen => ({...actual.get(frozen.id), ...frozen,
+      const videos = version.snapshot.videos.filter(frozen => {
+        const live = actual.get(frozen.id);
+        return live && validMedia(live) && (live.fingerprint || '') === (frozen.fingerprint || '');
+      }).map(frozen => ({...actual.get(frozen.id), ...frozen,
         file:actual.get(frozen.id)?.file, title:actual.get(frozen.id)?.title,
         episode_review:frozen.episode_review || "unchecked", episodes:frozen.episodes || [],
         genres:actual.get(frozen.id)?.genres || [], description:actual.get(frozen.id)?.description || ''}));
@@ -169,7 +174,7 @@
     if (direction === 'next') return Math.min(now,current.end + .5);
     return null;
   }
-  const api = { build, buildCycle, locate, guide, guideWindow, guideTicks, shuffled, validMedia, episodeProgrammes, browseProgramme, ANCHOR };
+  const api = { build, buildCycle, locate, guide, guideWindow, guideTicks, shuffled, validMedia, playbackBlocked, episodeProgrammes, browseProgramme, ANCHOR };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.USBTvSchedule = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
