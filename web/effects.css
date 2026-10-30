@@ -269,3 +269,22 @@ video.crt-shader-source {opacity:0}
 
 #playback-notice[hidden]{display:none!important}
 #player-dialog #playback-notice{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid #bb9a65;border-radius:6px;background:#302719;color:#fff0d0;font:12px/1.5 var(--sans)}
+
+/* Keep the page behind the player still, including Firefox's F11 mode.
+   Inner scroll areas (playlist, labels and controls) keep their own scrollbars. */
+html:has(#player-dialog[open]),
+html:has(#player-dialog[open]) body {
+  overflow:hidden;
+  scrollbar-width:none;
+  scrollbar-gutter:auto;
+}
+html:has(#player-dialog[open])::-webkit-scrollbar,
+html:has(#player-dialog[open]) body::-webkit-scrollbar {display:none}
+
+/* Whole-app fullscreen can still scroll the guide/library, without an edge bar. */
+html:fullscreen {scrollbar-width:none;scrollbar-gutter:auto}
+html:fullscreen::-webkit-scrollbar {display:none}
+@media (display-mode:fullscreen) {
+  html,body {scrollbar-width:none;scrollbar-gutter:auto}
+  html::-webkit-scrollbar,body::-webkit-scrollbar {display:none}
+}
