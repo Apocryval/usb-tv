@@ -225,7 +225,11 @@ class Handler(SimpleHTTPRequestHandler):
                 raise
 
     def end_headers(self):
-        self.send_header("Cache-Control", "no-store")
+        route = urlparse(self.path).path
+        # Let the browser revalidate unchanged artwork/scripts with Last-Modified
+        # instead of reading megabytes from the USB on every page load.
+        static = route == "/" or route.lstrip("/") in ASSETS
+        self.send_header("Cache-Control", "no-cache" if static else "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
@@ -492,7 +496,11 @@ def main():
             server = SessionServer(("127.0.0.1", 0), Handler)
             try:
                 SESSION.publish(server.server_port)
-                SCANS.start()
+                # Existing libraries are ready to watch. Full scans hash/import
+                # new files, decode samples and analyse audio: leave those reads
+                # to Rescan instead of competing with playback on a USB drive.
+                if not LIBRARY.read()["videos"]:
+                    SCANS.start()
                 url = f"http://127.0.0.1:{server.server_port}/"
                 print(startup_message(url), flush=True)
                 if not options.no_browser:

@@ -116,6 +116,21 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, status)
             caught.exception.close()
 
+    def test_static_artwork_revalidates_without_retransferring_and_apis_stay_fresh(self):
+        with urlopen(self.base + '/goblin-player-cabinet.png') as response:
+            self.assertEqual(response.headers['Cache-Control'], 'no-cache')
+            modified = response.headers['Last-Modified']
+            self.assertGreater(len(response.read()), 1000)
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(Request(self.base + '/goblin-player-cabinet.png', headers={'If-Modified-Since': modified}))
+        self.assertEqual(caught.exception.code, 304)
+        self.assertEqual(caught.exception.read(), b'')
+        caught.exception.close()
+        with urlopen(self.base + '/api/catalog') as response:
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        with urlopen(self.base + '/Videos/sample.mp4') as response:
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
     def test_reorganised_web_assets_are_served_without_exposing_source_or_state(self):
         with urlopen(self.base + '/app.js') as response:
             self.assertIn(b'openQuickLabels', response.read())

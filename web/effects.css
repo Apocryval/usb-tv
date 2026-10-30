@@ -270,16 +270,19 @@ video.crt-shader-source {opacity:0}
 #playback-notice[hidden]{display:none!important}
 #player-dialog #playback-notice{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid #bb9a65;border-radius:6px;background:#302719;color:#fff0d0;font:12px/1.5 var(--sans)}
 
-/* Keep the page behind the player still, including Firefox's F11 mode.
-   Inner scroll areas (playlist, labels and controls) keep their own scrollbars. */
-html:has(#player-dialog[open]),
-html:has(#player-dialog[open]) body {
-  overflow:hidden;
+/* Hide the outer scrollbar without changing the root/body clipping geometry.
+   Firefox can miscompose transparent dialog artwork when that changes on open. */
+html.player-open,
+html.player-open body {
   scrollbar-width:none;
   scrollbar-gutter:auto;
 }
-html:has(#player-dialog[open])::-webkit-scrollbar,
-html:has(#player-dialog[open]) body::-webkit-scrollbar {display:none}
+html.player-open::-webkit-scrollbar,
+html.player-open body::-webkit-scrollbar {display:none}
+
+/* Avoid filtering the entire guide behind a transparent, video-playing dialog.
+   A plain dim backdrop also avoids partial cabinet paints in Firefox. */
+#player-dialog::backdrop {backdrop-filter:none;background:#05060be8}
 
 /* Whole-app fullscreen can still scroll the guide/library, without an edge bar. */
 html:fullscreen {scrollbar-width:none;scrollbar-gutter:auto}

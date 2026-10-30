@@ -21,6 +21,21 @@ from catalogue import Catalogue
 
 
 class ServerResilienceTests(unittest.TestCase):
+    def test_existing_library_starts_without_heavy_scan_but_empty_library_is_scanned(self):
+        for videos in ([{'id': '000001'}], []):
+            with self.subTest(videos=videos), tempfile.TemporaryDirectory() as directory:
+                scans, http = Mock(), Mock()
+                http.server_port = 12345
+                http.serve_forever.side_effect = KeyboardInterrupt
+                with patch.object(server, 'LibrarySession'), patch.object(server, 'Catalogue') as catalogue, \
+                        patch.object(server, 'configure_error_log'), patch.object(server, 'ScanJobs', return_value=scans), \
+                        patch.object(server, 'SessionServer', return_value=http), \
+                        patch('sys.argv', ['server.py', '--library-root', directory, '--no-browser']), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    catalogue.return_value.read.return_value = {'videos': videos}
+                    server.main()
+                self.assertEqual(scans.start.call_count, 0 if videos else 1)
+
     def test_startup_reminder_explains_server_shutdown_and_disk_ejection(self):
         message = server.startup_message('http://127.0.0.1:12345/')
         self.assertIn('http://127.0.0.1:12345/', message)

@@ -1370,6 +1370,7 @@ function showPlayer(reveal = true) {
   window.USBTvAudio?.unlock();
   $("#guide-preview-video").pause();
   if (!$("#player-dialog").open) $("#player-dialog").showModal();
+  document.documentElement.classList.add('player-open');
   $('#player').focus({preventScroll:true});
   if (fullscreenElement() && state.catalog.settings?.fullscreen_mode !== "app") $("#player-dialog").classList.add("video-fills-screen");
   updatePlaybackControls();
@@ -2043,6 +2044,7 @@ document.addEventListener("keydown", event => {
   event.preventDefault(); toggleFullscreen($("#player-dialog").open ? $("#player-dialog") : document.documentElement);
 });
 $("#player-dialog").addEventListener("close", () => {
+  document.documentElement.classList.remove('player-open');
   stopChaosTransition();
   exitVideoView();
   closeQuickLabels();
@@ -2085,8 +2087,8 @@ updateFullscreenButtons(); applyThemeSetting(); updateClock();
 setInterval(updateClock,1000);
 setInterval(refreshGuideWindow,1000);
 setInterval(() => { syncChannel(); syncGuidePreview(); },500);
-// Discover new files without requiring a restart. Leave open editors undisturbed.
-setInterval(() => { if (!directFile && broadcastState.ready && !document.hidden) rescan(true); },120000);
+// Full scans import files and analyse audio. Start them explicitly with Rescan
+// rather than repeatedly competing with playback on the same USB drive.
 if (directFile) {
   window.USBTvIntro?.start('satellite');
   $("#server-notice").hidden = false;
@@ -2095,7 +2097,9 @@ if (directFile) {
 } else {
   loadCatalog().then(() => {
     window.USBTvIntro?.start(state.catalog.settings?.theme);
-    applyCrtSetting(); return rescan();
+    applyCrtSetting();
+    scanTimer = setInterval(pollScan,1000);
+    return pollScan();
   }).catch(error => {
     window.USBTvIntro?.start(state.catalog.settings?.theme);
     showToast(error.message);
